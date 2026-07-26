@@ -5,8 +5,8 @@ import yt_dlp
 
 # جلب البيانات من متغيرات البيئة (Railway)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_1 = os.getenv("CHANNEL_1")  # مثال: @channel1
-CHANNEL_2 = os.getenv("CHANNEL_2")  # مثال: @channel2
+CHANNEL_1 = os.getenv("CHANNEL_1")
+CHANNEL_2 = os.getenv("CHANNEL_2")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -58,7 +58,6 @@ def start(message):
 def handle_message(message):
     user_id = message.from_user.id
     
-    # التأكد من الاشتراك أولاً
     if not is_subscribed(user_id):
         bot.send_message(
             message.chat.id,
@@ -82,7 +81,7 @@ def handle_callback(call):
     if call.data == "check_sub":
         if is_subscribed(user_id):
             bot.answer_callback_query(call.id, "✅ شكراً لاشتراكك! يمكنك الآن استخدام البوت.")
-            bot.send_message(chat_id, "أرسل لي الرابط الآن وسأقوم بتبسيطه وتحميله لك.")
+            bot.send_message(chat_id, "أرسل لي الرابط الآن وسأقوم بتحميله لك.")
         else:
             bot.answer_callback_query(call.id, "❌ لم تشترك في جميع القنوات بعد!", show_alert=True)
         return
@@ -96,12 +95,46 @@ def handle_callback(call):
         is_audio = (call.data == "dl_audio")
         msg = bot.send_message(chat_id, "⏳ جاري جلب وتحميل المحتوى، انتظر لحظات...")
 
-        # إعدادات yt-dlp للتحميل
         file_template = f"download_{user_id}.%(ext)s"
+        
+        # إعدادات متقدمة للتحايل على حظر يوتيوب بالسيرفرات
         ydl_opts = {
             'outtmpl': file_template,
             'quiet': True,
             'no_warnings': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios', 'mweb']
+                }
+            }
+        }
+
+        if is_audio:
+            ydl_opts['format'] = 'bestaudio/best'
+        else:
+            ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+
+            with open(filename, 'rb') as f:
+                if is_audio:
+                    bot.send_audio(chat_id, f, caption="تم التحميل بنجاح 🎵")
+                else:
+                    bot.send_video(chat_id, f, caption="تم التحميل بنجاح 🎬")
+
+            bot.delete_message(chat_id, msg.message_id)
+
+            if os.path.exists(filename):
+                os.remove(filename)
+
+        except Exception as e:
+            bot.edit_message_text(f"❌ حدث خطأ أثناء التحميل: {str(e)[:100]}", chat_id, msg.message_id)
+
+bot.infinity_polling()
+'no_warnings': True,
         }
 
         if is_audio:
