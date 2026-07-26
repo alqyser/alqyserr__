@@ -4,9 +4,9 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import yt_dlp
 
 # جلب البيانات من متغيرات البيئة (Railway)
-BOT_TOKEN = os.getenv("8821430360:AAHiRjsgcr2RYE5kxUI0lg3HxMRYvoNBd50")
-CHANNEL_1 = os.getenv("@alqyserstoer")  # مثال: @channel1
-CHANNEL_2 = os.getenv("@adiaaa12q")  # مثال: @channel2
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_1 = os.getenv("CHANNEL_1")  # مثال: @channel1
+CHANNEL_2 = os.getenv("CHANNEL_2")  # مثال: @channel2
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
