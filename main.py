@@ -111,7 +111,8 @@ def handle_callback(call):
         if is_audio:
             ydl_opts['format'] = 'bestaudio/best'
         else:
-            ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+            # طلب فيديو متكامل محتوياً على الصوت مباشرة
+            ydl_opts['format'] = 'best[ext=mp4]/best'
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
