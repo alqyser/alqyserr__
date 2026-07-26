@@ -97,7 +97,6 @@ def handle_callback(call):
 
         file_template = f"download_{user_id}.%(ext)s"
         
-        # إعدادات متقدمة للتحايل على حظر يوتيوب بالسيرفرات
         ydl_opts = {
             'outtmpl': file_template,
             'quiet': True,
@@ -127,36 +126,6 @@ def handle_callback(call):
 
             bot.delete_message(chat_id, msg.message_id)
 
-            if os.path.exists(filename):
-                os.remove(filename)
-
-        except Exception as e:
-            bot.edit_message_text(f"❌ حدث خطأ أثناء التحميل: {str(e)[:100]}", chat_id, msg.message_id)
-
-bot.infinity_polling()
-'no_warnings': True,
-        }
-
-        if is_audio:
-            ydl_opts['format'] = 'bestaudio/best'
-        else:
-            ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info)
-
-            # إرسال الملف إلى المستخدم
-            with open(filename, 'rb') as f:
-                if is_audio:
-                    bot.send_audio(chat_id, f, caption="تم التحميل بواسطة بوتك 🎵")
-                else:
-                    bot.send_video(chat_id, f, caption="تم التحميل بواسطة بوتك 🎬")
-
-            bot.delete_message(chat_id, msg.message_id)
-
-            # مسح الملف من الاستضافة بعد الإرسال لتوفير المساحة
             if os.path.exists(filename):
                 os.remove(filename)
 
