@@ -444,7 +444,6 @@ def handle_callback(call):
         except Exception:
             pass
 
-        # 1️⃣ المحاولة الأولى: yt-dlp مع عدة تنويعات لعملاء التشغيل
         for clients in client_configs:
             ydl_opts = {
                 'outtmpl': file_template,
@@ -480,7 +479,6 @@ def handle_callback(call):
                 print(f"yt-dlp with clients {clients} failed: {e}")
                 continue
 
-        # 2️⃣ المحاولة الثانية: Piped
         if not download_success:
             try:
                 filename, video_title = download_via_piped(url, is_audio=is_audio)
@@ -488,14 +486,12 @@ def handle_callback(call):
             except Exception as piped_err:
                 print(f"Piped attempt failed: {piped_err}")
                 
-                # 3️⃣ المحاولة الثالثة: Invidious
                 try:
                     filename, video_title = download_via_invidious(url, is_audio=is_audio)
                     download_success = True
                 except Exception as inv_err:
                     print(f"Invidious attempt failed: {inv_err}")
                     
-                    # 4️⃣ المحاولة الرابعة: Cobalt
                     try:
                         filename, video_title = download_via_cobalt(url, is_audio=is_audio)
                         download_success = True
@@ -507,7 +503,6 @@ def handle_callback(call):
                             bot.edit_message_text("❌ تعذر تحميل هذا المقطع حالياً، يرجى تجربة فيديو آخر.", chat_id, msg.message_id)
                         return
 
-        # رفع الملف إلى التليجرام
         if download_success and filename and os.path.exists(filename):
             try:
                 file_size = os.path.getsize(filename)
@@ -541,5 +536,8 @@ def handle_callback(call):
                     print(f"First send failed: {send_err}")
 
                 if not sent:
-                    with open(filename, 'rb') as f:
-                
+                    try:
+                        with open(filename, 'rb') as f:
+                            if is_audio:
+                                bot.send_audio(chat_id, f, caption=f"🎬 تم التحميل بنجاح!\n📌 العنوان: {video_title[:60]}\n🤖 بواسطة: @{bot.get_me().username}")
+                          
