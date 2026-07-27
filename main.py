@@ -11,6 +11,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_1 = os.getenv("CHANNEL_1")
 CHANNEL_2 = os.getenv("CHANNEL_2")
 ADMIN_ID_ENV = os.getenv("ADMIN_ID")
+YT_COOKIES_ENV = os.getenv("YT_COOKIES")
 
 try:
     ADMIN_ID = int(ADMIN_ID_ENV) if ADMIN_ID_ENV else None
@@ -24,7 +25,7 @@ user_last_request = {}
 banned_users = set()
 
 COOLDOWN_TIME = 10 
-MAX_FILE_SIZE_BYTES = 48 * 1024 * 1024  # 48MB لتجنب حد التليجرام
+MAX_FILE_SIZE_BYTES = 48 * 1024 * 1024  # 48MB حد الأمان لتجنب تجاوز 50MB
 
 # ==================== دوال الحماية والتحقق ====================
 
@@ -65,20 +66,29 @@ def download_keyboard():
     )
     return markup
 
-# دالة التحميل المباشر من المحرك البديل لتجاوز حظر يوتيوب بالسيرفرات
+def prepare_cookies_file():
+    """حفظ ملف الكوكيز إن وجد في متغيرات البيئة"""
+    if YT_COOKIES_ENV:
+        try:
+            with open("cookies.txt", "w", encoding="utf-8") as f:
+                f.write(YT_COOKIES_ENV)
+            return "cookies.txt"
+        except Exception as e:
+            print(f"Error writing cookies: {e}")
+    return None
+
 def download_via_cobalt(url, is_audio=False):
+    """المحرك الذهبي البديل المخصص لتجاوز حظر يوتيوب بالسيرفرات"""
     api_url = "https://api.cobalt.tools/"
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
-    
     payload = {
         "url": url,
         "videoQuality": "720"
     }
-    
     if is_audio:
         payload["downloadMode"] = "audio"
         payload["audioFormat"] = "mp3"
@@ -89,14 +99,10 @@ def download_via_cobalt(url, is_audio=False):
     if data.get("status") in ["redirect", "tunnel"]:
         file_url = data.get("url")
         ext = "mp3" if is_audio else "mp4"
-        filename = f"download_cobalt_{int(time.time())}.{ext}"
+        filename = f"download_yt_{int(time.time())}.{ext}"
         
         with requests.get(file_url, stream=True, timeout=60) as r:
             r.raise_for_status()
-            content_length = r.headers.get('Content-Length')
-            if content_length and int(content_length) > MAX_FILE_SIZE_BYTES:
-                raise Exception("FileTooBig")
-                
             downloaded = 0
             with open(filename, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192):
@@ -110,9 +116,9 @@ def download_via_cobalt(url, is_audio=False):
                         f.write(chunk)
         return filename
     else:
-        raise Exception(data.get("text", "Cobalt API Error"))
+        raise Exception(data.get("text", "Cobalt Error"))
 
-# ==================== معالجات الأوامر والرسائل ====================
+# ==================== معالجة الرسائل والأوامر ====================
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -174,7 +180,7 @@ def handle_callback(call):
     chat_id = call.message.chat.id
 
     if is_user_banned(user_id):
-        bot.answer_callback_query(call.id, "🚫 أنت محظور من استخدام البوت.", show_alert=True)
+        bot.answer_callback_query(call.id, "🚫 أنت محظور.", show_alert=True)
         return
 
     if call.data == "check_sub":
@@ -197,7 +203,9 @@ def handle_callback(call):
         filename = None
         download_success = False
 
-        # 1. محاولة التحميل عبر yt-dlp
+        # تجهيز الكوكيز إن وجدت
+        cookie_file = prepare_cookies_file()
+
         file_template = f"download_{user_id}_{int(time.time())}.%(ext)s"
         ydl_opts = {
             'outtmpl': file_template,
@@ -213,34 +221,44 @@ def handle_callback(call):
             }
         }
 
+        if cookie_file and os.path.exists(cookie_file):
+            ydl_opts['cookiefile'] = cookie_file
+
         if is_audio:
             ydl_opts['format'] = 'bestaudio/best'
         else:
             ydl_opts['format'] = 'best[filesize<48M]/best[height<=720]/best[height<=480]/best'
 
+        # المحاولة الأولى عبر yt-dlp
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
                 download_success = True
         except Exception as e:
-            # 2. في حال فشل yt-dlp (بسبب حظر يوتيوب للسيرفر)، التحول أوتوماتيكياً للمحرك البديل
-            try:
-                filename = download_via_cobalt(url, is_audio=is_audio)
-                download_success = True
-            except Exception as cobalt_err:
-                if "FileTooBig" in str(cobalt_err):
-                    bot.edit_message_text("⚠️ الفيديو المطلوب أضخم من 48 ميغابايت ولا يمكن إرساله عبر التليجرام.", chat_id, msg.message_id)
-                else:
-                    bot.edit_message_text("❌ حدث خطأ أثناء التحميل، يرجى التأكد من صحة الرابط والتجربة مجدداً.", chat_id, msg.message_id)
+            err_msg = str(e)
+            print(f"yt-dlp failed: {err_msg}")
+            
+            # إذا فشلت yt-dlp بسبب حظر يوتيوب بالسيرفر، ننتقل فوراً وبشكل آلي للمحرك الذهبي
+            if "youtube" in url.lower() or "youtu.be" in url.lower() or "Sign in" in err_msg:
+                try:
+                    filename = download_via_cobalt(url, is_audio=is_audio)
+                    download_success = True
+                except Exception as cobalt_err:
+                    if "FileTooBig" in str(cobalt_err):
+                        bot.edit_message_text("⚠️ الفيديو أضخم من 48MB ولا يمكن إرساله عبر التليجرام.", chat_id, msg.message_id)
+                    else:
+                        bot.edit_message_text("❌ تعذر تحميل فيديو يوتيوب، يرجى تجربة رابط فيديو آخر.", chat_id, msg.message_id)
+                    return
+            else:
+                bot.edit_message_text(f"❌ حدث خطأ أثناء التحميل: {err_msg[:100]}", chat_id, msg.message_id)
                 return
 
-        # إرسال الملف المحمل للتليجرام
         if download_success and filename and os.path.exists(filename):
             try:
                 file_size = os.path.getsize(filename)
                 if file_size > MAX_FILE_SIZE_BYTES:
-                    bot.edit_message_text("⚠️ الفيديو المطلوب أضخم من 48 ميغابايت!", chat_id, msg.message_id)
+                    bot.edit_message_text("⚠️ الفيديو أضخم من 48MB ولا يمكن إرساله عبر التليجرام.", chat_id, msg.message_id)
                     return
 
                 with open(filename, 'rb') as f:
@@ -262,4 +280,4 @@ def handle_callback(call):
                         pass
 
 bot.infinity_polling(skip_pending=True)
-                    
+        
