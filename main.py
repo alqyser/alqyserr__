@@ -10,7 +10,7 @@ import yt_dlp
 # تعطيل تحذيرات SSL كلياً للمحركات البديلة
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# رفع مهلة الاتصال والرفع لتليجرام
+# رفع مهلة الاتصال والرفع لتليجرام لمنع أخطاء الشبكة
 telebot.apihelper.CONNECT_TIMEOUT = 30
 telebot.apihelper.READ_TIMEOUT = 300
 
@@ -34,9 +34,10 @@ banned_users = set()
 COOLDOWN_TIME = 5 
 MAX_FILE_SIZE_BYTES = 48 * 1024 * 1024  # 48MB
 
-# ==================== تنظيف النصوص لتفادي أخطاء ماركداون ====================
+# ==================== دوال المساعدة وتنظيف النصوص ====================
 
 def clean_markdown(text):
+    """تنظيف النصوص من رموز الماركداون لتفادي خطأ Parse Entities"""
     if not text:
         return ""
     for char in ['_', '*', '`', '[', ']', '(', ')']:
@@ -44,6 +45,7 @@ def clean_markdown(text):
     return text.strip()
 
 def save_user(user_id):
+    """حفظ أيدي المستخدم للإحصائيات"""
     try:
         if not os.path.exists("users.txt"):
             with open("users.txt", "w") as f:
@@ -60,6 +62,7 @@ def save_user(user_id):
         print(f"Error saving user: {e}")
 
 def get_users_count():
+    """حساب عدد المستخدمين الكلي"""
     if not os.path.exists("users.txt"):
         return 0
     try:
@@ -88,7 +91,7 @@ def is_subscribed(user_id):
             return False
     return True
 
-# ==================== لوحات الأزرار ====================
+# ==================== أزرار التحكم والواجهات ====================
 
 def start_keyboard():
     markup = InlineKeyboardMarkup()
@@ -128,8 +131,6 @@ def get_cookie_file():
             print(f"Error writing cookies: {e}")
     return None
 
-# ==================== محركات جلب يوتيوب الشاملة ====================
-
 def get_session():
     session = requests.Session()
     session.verify = False
@@ -138,8 +139,9 @@ def get_session():
     })
     return session
 
+# ==================== محركات التحميل الفرعية ====================
+
 def download_via_piped(url, is_audio=False):
-    """محرك Piped مع تجاوز SSL ومصادر متعددة"""
     video_id = None
     if "v=" in url:
         video_id = url.split("v=")[1].split("&")[0]
@@ -157,12 +159,10 @@ def download_via_piped(url, is_audio=False):
         "https://pipedapi.mha.fi",
         "https://pipedapi.adminforge.de",
         "https://pipedapi.astro.swag.ph",
-        "https://pipedapi.sugoi.fyi",
-        "https://pipedapi.lunar.icu"
+        "https://pipedapi.sugoi.fyi"
     ]
 
     session = get_session()
-
     for api in piped_instances:
         try:
             res = session.get(f"{api}/streams/{video_id}", timeout=8)
@@ -208,7 +208,6 @@ def download_via_piped(url, is_audio=False):
     raise Exception("Piped Engine Failed")
 
 def download_via_invidious(url, is_audio=False):
-    """محرك Invidious الشامل"""
     video_id = None
     if "v=" in url:
         video_id = url.split("v=")[1].split("&")[0]
@@ -223,14 +222,11 @@ def download_via_invidious(url, is_audio=False):
     invidious_instances = [
         "https://yewtu.be",
         "https://invidious.privacydev.net",
-        "https://invidious.nerdvpn.de",
         "https://inv.tux.pizza",
-        "https://invidious.drgns.space",
-        "https://invidious.projectsegfau.lt"
+        "https://invidious.drgns.space"
     ]
 
     session = get_session()
-
     for inv in invidious_instances:
         try:
             res = session.get(f"{inv}/api/v1/videos/{video_id}", timeout=8)
@@ -278,7 +274,6 @@ def download_via_invidious(url, is_audio=False):
     raise Exception("Invidious Engine Failed")
 
 def download_via_cobalt(url, is_audio=False):
-    """محرك Cobalt"""
     api_url = "https://api.cobalt.tools/"
     payload = {
         "url": url,
@@ -314,7 +309,71 @@ def download_via_cobalt(url, is_audio=False):
     else:
         raise Exception(data.get("text", "Cobalt Error"))
 
-# ==================== معالجة الأوامر ====================
+# ==================== المنسق الرئيسي للتحميل ====================
+
+def download_media(url, is_audio, user_id):
+    cookie_file = get_cookie_file()
+    file_template = f"download_{user_id}_{int(time.time())}.%(ext)s"
+
+    client_configs = [
+        ['android_creator', 'ios'],
+        ['tv_embedded', 'android_vr'],
+        ['mweb', 'ios']
+    ]
+
+    # 1. المحاولة بواسطة yt-dlp
+    for clients in client_configs:
+        ydl_opts = {
+            'outtmpl': file_template,
+            'quiet': True,
+            'no_warnings': True,
+            'socket_timeout': 25,
+            'max_filesize': MAX_FILE_SIZE_BYTES,
+            'nocheckcertificate': True,
+            'geo_bypass': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': clients
+                }
+            }
+        }
+        if cookie_file:
+            ydl_opts['cookiefile'] = cookie_file
+
+        if is_audio:
+            ydl_opts['format'] = 'bestaudio/best'
+        else:
+            ydl_opts['format'] = 'best[filesize<48M]/best[height<=720]/best[height<=480]/best'
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                title = info.get("title", "مقطع فيديو")
+                return filename, title
+        except Exception as e:
+            print(f"yt-dlp with clients {clients} failed: {e}")
+            continue
+
+    # 2. المحركات الاحتياطية المتسلسلة
+    try:
+        return download_via_piped(url, is_audio)
+    except Exception as e:
+        print(f"Piped fallback failed: {e}")
+
+    try:
+        return download_via_invidious(url, is_audio)
+    except Exception as e:
+        print(f"Invidious fallback failed: {e}")
+
+    try:
+        return download_via_cobalt(url, is_audio)
+    except Exception as e:
+        print(f"Cobalt fallback failed: {e}")
+
+    raise Exception("All download engines failed.")
+
+# ==================== معالجة رسائل التليجرام ====================
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -423,87 +482,25 @@ def handle_callback(call):
             return
 
         is_audio = (call.data == "dl_audio")
-        
         msg = bot.send_message(chat_id, "🔍 **جاري فحص وتجهيز الرابط...**", parse_mode="Markdown")
-
-        filename = None
-        video_title = "مقطع فيديو"
-        download_success = False
-
-        cookie_file = get_cookie_file()
-        file_template = f"download_{user_id}_{int(time.time())}.%(ext)s"
-
-        client_configs = [
-            ['android_creator', 'ios'],
-            ['tv_embedded', 'android_vr'],
-            ['mweb', 'ios']
-        ]
 
         try:
             bot.edit_message_text("📥 **جاري جلب وتحميل الفيديو من المصدر...**", chat_id, msg.message_id, parse_mode="Markdown")
         except Exception:
             pass
 
-        for clients in client_configs:
-            ydl_opts = {
-                'outtmpl': file_template,
-                'quiet': True,
-                'no_warnings': True,
-                'socket_timeout': 25,
-                'max_filesize': MAX_FILE_SIZE_BYTES,
-                'nocheckcertificate': True,
-                'geo_bypass': True,
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': clients
-                    }
-                }
-            }
-
-            if cookie_file:
-                ydl_opts['cookiefile'] = cookie_file
-
-            if is_audio:
-                ydl_opts['format'] = 'bestaudio/best'
+        filename = None
+        try:
+            filename, video_title = download_media(url, is_audio, user_id)
+        except Exception as dl_err:
+            err_str = str(dl_err)
+            if "FileTooBig" in err_str:
+                bot.edit_message_text("⚠️ الفيديو أضخم من 48MB ولا يمكن إرساله عبر التليجرام.", chat_id, msg.message_id)
             else:
-                ydl_opts['format'] = 'best[filesize<48M]/best[height<=720]/best[height<=480]/best'
+                bot.edit_message_text("❌ تعذر تحميل هذا المقطع حالياً، يرجى تجربة فيديو آخر.", chat_id, msg.message_id)
+            return
 
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    filename = ydl.prepare_filename(info)
-                    video_title = info.get("title", "مقطع فيديو")
-                    download_success = True
-                    break
-            except Exception as e:
-                print(f"yt-dlp with clients {clients} failed: {e}")
-                continue
-
-        if not download_success:
-            try:
-                filename, video_title = download_via_piped(url, is_audio=is_audio)
-                download_success = True
-            except Exception as piped_err:
-                print(f"Piped attempt failed: {piped_err}")
-                
-                try:
-                    filename, video_title = download_via_invidious(url, is_audio=is_audio)
-                    download_success = True
-                except Exception as inv_err:
-                    print(f"Invidious attempt failed: {inv_err}")
-                    
-                    try:
-                        filename, video_title = download_via_cobalt(url, is_audio=is_audio)
-                        download_success = True
-                    except Exception as cobalt_err:
-                        print(f"Cobalt attempt failed: {cobalt_err}")
-                        if "FileTooBig" in str(cobalt_err) or "FileTooBig" in str(piped_err):
-                            bot.edit_message_text("⚠️ الفيديو أضخم من 48MB ولا يمكن إرساله عبر التليجرام.", chat_id, msg.message_id)
-                        else:
-                            bot.edit_message_text("❌ تعذر تحميل هذا المقطع حالياً، يرجى تجربة فيديو آخر.", chat_id, msg.message_id)
-                        return
-
-        if download_success and filename and os.path.exists(filename):
+        if filename and os.path.exists(filename):
             try:
                 file_size = os.path.getsize(filename)
                 if file_size > MAX_FILE_SIZE_BYTES:
@@ -533,11 +530,22 @@ def handle_callback(call):
                             bot.send_video(chat_id, f, caption=caption_text, parse_mode="Markdown", timeout=300)
                     sent = True
                 except Exception as send_err:
-                    print(f"First send failed: {send_err}")
+                    print(f"First send attempt failed: {send_err}")
 
                 if not sent:
                     try:
                         with open(filename, 'rb') as f:
                             if is_audio:
                                 bot.send_audio(chat_id, f, caption=f"🎬 تم التحميل بنجاح!\n📌 العنوان: {video_title[:60]}\n🤖 بواسطة: @{bot.get_me().username}")
-                          
+                            else:
+                                bot.send_video(chat_id, f, caption=f"🎬 تم التحميل بنجاح!\n📌 العنوان: {video_title[:60]}\n🤖 بواسطة: @{bot.get_me().username}")
+                    except Exception as e:
+                        print(f"Fallback send attempt failed: {e}")
+
+                try:
+                    bot.delete_message(chat_id, msg.message_id)
+                except Exception:
+                    pass
+
+            except ApiTelegramException as e:
+                bot.edit_message_t
