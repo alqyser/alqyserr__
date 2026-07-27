@@ -6,7 +6,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from telebot.apihelper import ApiTelegramException
 import yt_dlp
 
-# رفع مهلة الاتصال والرفع لمنع أخطاء ReadTimeout أثناء إرسال الفيديوهات
+# رفع مهلة الاتصال والرفع لتليجرام لمنع خطأ ReadTimeout أثناء إرسال الفيديوهات
 telebot.apihelper.CONNECT_TIMEOUT = 30
 telebot.apihelper.READ_TIMEOUT = 300
 
@@ -30,6 +30,36 @@ banned_users = set()
 COOLDOWN_TIME = 5 
 MAX_FILE_SIZE_BYTES = 48 * 1024 * 1024  # 48MB
 
+# ==================== دوال حفظ وتتبع المستخدمين ====================
+
+def save_user(user_id):
+    """حفظ أيدي المستخدم في ملف لحساب الإحصائيات"""
+    try:
+        if not os.path.exists("users.txt"):
+            with open("users.txt", "w") as f:
+                f.write(f"{user_id}\n")
+            return
+        
+        with open("users.txt", "r") as f:
+            users = f.read().splitlines()
+        
+        if str(user_id) not in users:
+            with open("users.txt", "a") as f:
+                f.write(f"{user_id}\n")
+    except Exception as e:
+        print(f"Error saving user: {e}")
+
+def get_users_count():
+    """حساب عدد المستخدمين الكلي"""
+    if not os.path.exists("users.txt"):
+        return 0
+    try:
+        with open("users.txt", "r") as f:
+            users = set(f.read().splitlines())
+        return len(users)
+    except Exception:
+        return 0
+
 def is_user_banned(user_id):
     return user_id in banned_users
 
@@ -48,6 +78,16 @@ def is_subscribed(user_id):
             print(f"Error checking sub for {ch}: {e}")
             return False
     return True
+
+# ==================== لوحات الأزرار ====================
+
+def start_keyboard():
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("💡 طريقة الاستخدام", callback_data="help_usage"),
+        InlineKeyboardButton("👨‍💻 المطور", callback_data="help_dev")
+    )
+    return markup
 
 def sub_keyboard():
     markup = InlineKeyboardMarkup()
@@ -79,8 +119,9 @@ def get_cookie_file():
             print(f"Error writing cookies: {e}")
     return None
 
+# ==================== المحركات البديلة ====================
+
 def download_via_cobalt(url, is_audio=False):
-    """المحرك البديل الأول: Cobalt API"""
     api_url = "https://api.cobalt.tools/"
     headers = {
         "Accept": "application/json",
@@ -116,12 +157,11 @@ def download_via_cobalt(url, is_audio=False):
                                 os.remove(filename)
                             raise Exception("FileTooBig")
                         f.write(chunk)
-        return filename
+        return filename, "مقطع مجهول"
     else:
         raise Exception(data.get("text", "Cobalt Error"))
 
 def download_via_piped(url, is_audio=False):
-    """المحرك البديل الثاني: Piped Streams API"""
     video_id = None
     if "v=" in url:
         video_id = url.split("v=")[1].split("&")[0]
@@ -143,6 +183,7 @@ def download_via_piped(url, is_audio=False):
             if res.status_code == 200:
                 data = res.json()
                 file_url = None
+                title = data.get("title", "مقطع يوتيوب")
                 
                 if is_audio:
                     audio_streams = data.get("audioStreams", [])
@@ -173,18 +214,20 @@ def download_via_piped(url, is_audio=False):
                                             os.remove(filename)
                                         raise Exception("FileTooBig")
                                     f.write(chunk)
-                    return filename
+                    return filename, title
         except Exception as e:
             print(f"Piped instance {api} failed: {e}")
             continue
 
     raise Exception("Piped Engine Failed")
 
-# ==================== معالجة الرسائل والأوامر ====================
+# ==================== معالجة الأوامر ====================
 
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
+    first_name = message.from_user.first_name or "المستخدم"
+    save_user(user_id)
 
     if is_user_banned(user_id):
         bot.send_message(message.chat.id, "🚫 أنت محظور من استخدام هذا البوت.")
@@ -199,14 +242,25 @@ def start(message):
         return
 
     welcome_msg = (
-        "أهلاً بك! 🖐️\n\n"
-        "أرسل لي رابط فيديو من أي منصة (تيك توك، انستغرام، يوتيوب، فيسبوك...) وسأقوم بتحميله لك فوراً."
+        f"أهلاً بك يا **{first_name}** 👋\n\n"
+        "📥 **بوت التحميل الشامل السريع**\n"
+        "أرسل لي أي رابط من (يوتيوب، تيك توك، انستغرام، فيسبوك...) وسأقوم بتحميله لك فوراً بأعلى جودة ممتازة! ✨"
     )
-    bot.send_message(message.chat.id, welcome_msg)
+    bot.send_message(message.chat.id, welcome_msg, parse_mode="Markdown", reply_markup=start_keyboard())
+
+@bot.message_handler(commands=['stats'])
+def stats(message):
+    user_id = message.from_user.id
+    if ADMIN_ID and user_id == ADMIN_ID:
+        total_users = get_users_count()
+        bot.reply_to(message, f"📊 **إحصائيات البوت الحالية:**\n\n👤 عدد المستخدمين الكلي: `{total_users}` مستخدم", parse_mode="Markdown")
+    else:
+        bot.reply_to(message, "🚫 هذا الأمر مخصص لمالك البوت فقط.")
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     user_id = message.from_user.id
+    save_user(user_id)
 
     if is_user_banned(user_id):
         return
@@ -232,7 +286,7 @@ def handle_message(message):
     if url.startswith("http://") or url.startswith("https://"):
         user_urls[user_id] = url
         user_last_request[user_id] = current_time
-        bot.send_message(message.chat.id, "اختر نوع الملف الذي تريد تحميله:", reply_markup=download_keyboard())
+        bot.send_message(message.chat.id, "🎬 اختر النوع الذي تريد تنزيله:", reply_markup=download_keyboard())
     else:
         bot.send_message(message.chat.id, "❌ يرجى إرسال رابط صحيح يبدأ بـ http:// أو https://")
 
@@ -253,6 +307,22 @@ def handle_callback(call):
             bot.answer_callback_query(call.id, "❌ لم تشترك في جميع القنوات بعد!", show_alert=True)
         return
 
+    if call.data == "help_usage":
+        bot.answer_callback_query(
+            call.id,
+            "💡 طريقة الاستخدام:\n1. انسخ رابط أي فيديو من أي منصة.\n2. أرسله للبوت هنا مباشرة.\n3. اضغط على (فيديو) أو (صوت).",
+            show_alert=True
+        )
+        return
+
+    if call.data == "help_dev":
+        bot.answer_callback_query(
+            call.id,
+            "👨‍💻 مطوّر البوت وقناته الأساسية متاحة في أزرار الاشتراك.",
+            show_alert=True
+        )
+        return
+
     if call.data in ["dl_video", "dl_audio"]:
         url = user_urls.get(user_id)
         if not url:
@@ -260,9 +330,12 @@ def handle_callback(call):
             return
 
         is_audio = (call.data == "dl_audio")
-        msg = bot.send_message(chat_id, "⏳ جاري جلب وتحميل المحتوى، انتظر لحظات...")
+        
+        # المؤشر التفاعلي 1
+        msg = bot.send_message(chat_id, "🔍 **جاري فحص وتجهيز الرابط...**", parse_mode="Markdown")
 
         filename = None
+        video_title = "مقطع بدون عنوان"
         download_success = False
 
         cookie_file = get_cookie_file()
@@ -291,11 +364,18 @@ def handle_callback(call):
         else:
             ydl_opts['format'] = 'best[filesize<48M]/best[height<=720]/best[height<=480]/best'
 
-        # 1️⃣ المحاولة الأولى عبر yt-dlp بعملاء الشاشات المدمجة TV
+        # المؤشر التفاعلي 2
+        try:
+            bot.edit_message_text("📥 **جاري جلب وتحميل الفيديو من المصدر...**", chat_id, msg.message_id, parse_mode="Markdown")
+        except Exception:
+            pass
+
+        # 1️⃣ المحاولة الأولى عبر yt-dlp
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
+                video_title = info.get("title", "مقطع فيديو")
                 download_success = True
         except Exception as e:
             err_msg = str(e)
@@ -303,14 +383,14 @@ def handle_callback(call):
 
             # 2️⃣ المحاولة الثانية عبر محرك Cobalt
             try:
-                filename = download_via_cobalt(url, is_audio=is_audio)
+                filename, video_title = download_via_cobalt(url, is_audio=is_audio)
                 download_success = True
             except Exception as cobalt_err:
                 print(f"Cobalt attempt failed: {cobalt_err}")
                 
                 # 3️⃣ المحاولة الثالثة عبر محرك Piped
                 try:
-                    filename = download_via_piped(url, is_audio=is_audio)
+                    filename, video_title = download_via_piped(url, is_audio=is_audio)
                     download_success = True
                 except Exception as piped_err:
                     print(f"Piped attempt failed: {piped_err}")
@@ -320,7 +400,7 @@ def handle_callback(call):
                         bot.edit_message_text("❌ تعذر تحميل هذا المقطع حالياً، يرجى تجربة فيديو آخر.", chat_id, msg.message_id)
                     return
 
-        # 4️⃣ إرسال الملف إلى التليجرام
+        # المؤشر التفاعلي 3
         if download_success and filename and os.path.exists(filename):
             try:
                 file_size = os.path.getsize(filename)
@@ -328,11 +408,23 @@ def handle_callback(call):
                     bot.edit_message_text("⚠️ الفيديو أضخم من 48MB ولا يمكن إرساله عبر التليجرام.", chat_id, msg.message_id)
                     return
 
+                try:
+                    bot.edit_message_text("📤 **جاري رفع الفيديو إلى التليجرام...**", chat_id, msg.message_id, parse_mode="Markdown")
+                except Exception:
+                    pass
+
+                # الكابشن التجميلي
+                caption_text = (
+                    f"🎬 **تم التحميل بنجاح!**\n\n"
+                    f"📌 **العنوان:** {video_title[:60]}\n\n"
+                    f"🤖 **بواسطة:** @{bot.get_me().username}"
+                )
+
                 with open(filename, 'rb') as f:
                     if is_audio:
-                        bot.send_audio(chat_id, f, caption="تم التحميل بنجاح 🎵", timeout=300)
+                        bot.send_audio(chat_id, f, caption=caption_text, parse_mode="Markdown", timeout=300)
                     else:
-                        bot.send_video(chat_id, f, caption="تم التحميل بنجاح 🎬", timeout=300)
+                        bot.send_video(chat_id, f, caption=caption_text, parse_mode="Markdown", timeout=300)
 
                 bot.delete_message(chat_id, msg.message_id)
             except ApiTelegramException as e:
@@ -349,4 +441,4 @@ def handle_callback(call):
                         pass
 
 bot.infinity_polling(timeout=30, long_polling_timeout=15, skip_pending=True)
-            
+                     
