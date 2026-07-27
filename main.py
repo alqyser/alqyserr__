@@ -7,10 +7,10 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from telebot.apihelper import ApiTelegramException
 import yt_dlp
 
-# تعطيل تحذيرات SSL غير الموثوقة للمحركات البديلة
+# تعطيل تحذيرات SSL كلياً للمحركات البديلة
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# رفع مهلة الاتصال والرفع لتليجرام لمنع خطأ ReadTimeout أثناء إرسال الفيديوهات
+# رفع مهلة الاتصال والرفع لتليجرام
 telebot.apihelper.CONNECT_TIMEOUT = 30
 telebot.apihelper.READ_TIMEOUT = 300
 
@@ -34,20 +34,16 @@ banned_users = set()
 COOLDOWN_TIME = 5 
 MAX_FILE_SIZE_BYTES = 48 * 1024 * 1024  # 48MB
 
-# ==================== تنظيف النصوص لتفادي خطأ ماركداون ====================
+# ==================== تنظيف النصوص لتفادي أخطاء ماركداون ====================
 
 def clean_markdown(text):
-    """تنظيف النصوص من الرموز الخاصة التي تسبب خطأ Parse Entities في تليجرام"""
     if not text:
         return ""
-    for char in ['_', '*', '`', '[']:
+    for char in ['_', '*', '`', '[', ']', '(', ')']:
         text = str(text).replace(char, ' ')
     return text.strip()
 
-# ==================== دوال حفظ وتتبع المستخدمين ====================
-
 def save_user(user_id):
-    """حفظ أيدي المستخدم في ملف لحساب الإحصائيات"""
     try:
         if not os.path.exists("users.txt"):
             with open("users.txt", "w") as f:
@@ -64,7 +60,6 @@ def save_user(user_id):
         print(f"Error saving user: {e}")
 
 def get_users_count():
-    """حساب عدد المستخدمين الكلي"""
     if not os.path.exists("users.txt"):
         return 0
     try:
@@ -133,10 +128,18 @@ def get_cookie_file():
             print(f"Error writing cookies: {e}")
     return None
 
-# ==================== المحركات البديلة لليوتيوب ====================
+# ==================== محركات جلب يوتيوب الشاملة ====================
+
+def get_session():
+    session = requests.Session()
+    session.verify = False
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    })
+    return session
 
 def download_via_piped(url, is_audio=False):
-    """محرك Piped المحدث مع تجاوز شهادات SSL المتضاربة"""
+    """محرك Piped مع تجاوز SSL ومصادر متعددة"""
     video_id = None
     if "v=" in url:
         video_id = url.split("v=")[1].split("&")[0]
@@ -152,13 +155,17 @@ def download_via_piped(url, is_audio=False):
         "https://pipedapi.kavin.rocks",
         "https://api.piped.private.coffee",
         "https://pipedapi.mha.fi",
-        "https://piped-api.garudalinux.org",
-        "https://pipedapi.astro.swag.ph"
+        "https://pipedapi.adminforge.de",
+        "https://pipedapi.astro.swag.ph",
+        "https://pipedapi.sugoi.fyi",
+        "https://pipedapi.lunar.icu"
     ]
+
+    session = get_session()
 
     for api in piped_instances:
         try:
-            res = requests.get(f"{api}/streams/{video_id}", timeout=10, verify=False)
+            res = session.get(f"{api}/streams/{video_id}", timeout=8)
             if res.status_code == 200:
                 data = res.json()
                 file_url = None
@@ -180,7 +187,7 @@ def download_via_piped(url, is_audio=False):
                 if file_url:
                     ext = "mp3" if is_audio else "mp4"
                     filename = f"download_piped_{int(time.time())}.{ext}"
-                    with requests.get(file_url, stream=True, timeout=(15, 180), verify=False) as r:
+                    with session.get(file_url, stream=True, timeout=(15, 180)) as r:
                         r.raise_for_status()
                         downloaded = 0
                         with open(filename, 'wb') as f:
@@ -201,7 +208,7 @@ def download_via_piped(url, is_audio=False):
     raise Exception("Piped Engine Failed")
 
 def download_via_invidious(url, is_audio=False):
-    """محرك Invidious الاحتياطي المباشر"""
+    """محرك Invidious الشامل"""
     video_id = None
     if "v=" in url:
         video_id = url.split("v=")[1].split("&")[0]
@@ -216,13 +223,17 @@ def download_via_invidious(url, is_audio=False):
     invidious_instances = [
         "https://yewtu.be",
         "https://invidious.privacydev.net",
+        "https://invidious.nerdvpn.de",
+        "https://inv.tux.pizza",
         "https://invidious.drgns.space",
-        "https://inv.tux.pizza"
+        "https://invidious.projectsegfau.lt"
     ]
+
+    session = get_session()
 
     for inv in invidious_instances:
         try:
-            res = requests.get(f"{inv}/api/v1/videos/{video_id}", timeout=10, verify=False)
+            res = session.get(f"{inv}/api/v1/videos/{video_id}", timeout=8)
             if res.status_code == 200:
                 data = res.json()
                 title = data.get("title", "مقطع يوتيوب")
@@ -246,7 +257,7 @@ def download_via_invidious(url, is_audio=False):
                 if file_url:
                     ext = "mp3" if is_audio else "mp4"
                     filename = f"download_inv_{int(time.time())}.{ext}"
-                    with requests.get(file_url, stream=True, timeout=(15, 180), verify=False) as r:
+                    with session.get(file_url, stream=True, timeout=(15, 180)) as r:
                         r.raise_for_status()
                         downloaded = 0
                         with open(filename, 'wb') as f:
@@ -269,11 +280,6 @@ def download_via_invidious(url, is_audio=False):
 def download_via_cobalt(url, is_audio=False):
     """محرك Cobalt"""
     api_url = "https://api.cobalt.tools/"
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
     payload = {
         "url": url,
         "videoQuality": "720"
@@ -282,7 +288,8 @@ def download_via_cobalt(url, is_audio=False):
         payload["downloadMode"] = "audio"
         payload["audioFormat"] = "mp3"
 
-    res = requests.post(api_url, json=payload, headers=headers, timeout=(10, 40), verify=False)
+    session = get_session()
+    res = session.post(api_url, json=payload, timeout=(10, 30))
     data = res.json()
     
     if data.get("status") in ["redirect", "tunnel"]:
@@ -290,7 +297,7 @@ def download_via_cobalt(url, is_audio=False):
         ext = "mp3" if is_audio else "mp4"
         filename = f"download_yt_{int(time.time())}.{ext}"
         
-        with requests.get(file_url, stream=True, timeout=(15, 180), verify=False) as r:
+        with session.get(file_url, stream=True, timeout=(15, 180)) as r:
             r.raise_for_status()
             downloaded = 0
             with open(filename, 'wb') as f:
@@ -426,61 +433,70 @@ def handle_callback(call):
         cookie_file = get_cookie_file()
         file_template = f"download_{user_id}_{int(time.time())}.%(ext)s"
 
-        # إعدادات yt-dlp النظيفة والفعالة لعميل iOS و Android لمنع حظر الداتا سنتر
-        ydl_opts = {
-            'outtmpl': file_template,
-            'quiet': True,
-            'no_warnings': True,
-            'socket_timeout': 30,
-            'max_filesize': MAX_FILE_SIZE_BYTES,
-            'nocheckcertificate': True,
-            'geo_bypass': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['ios', 'android']
-                }
-            }
-        }
-
-        if cookie_file:
-            ydl_opts['cookiefile'] = cookie_file
-
-        if is_audio:
-            ydl_opts['format'] = 'bestaudio/best'
-        else:
-            ydl_opts['format'] = 'best[filesize<48M]/best[height<=720]/best[height<=480]/best'
+        # إعدادات متطورة ومزدوجة لـ yt-dlp تمنع حظر الداتا سنتر كلياً
+        client_configs = [
+            ['android_creator', 'ios'],
+            ['tv_embedded', 'android_vr'],
+            ['mweb', 'ios']
+        ]
 
         try:
             bot.edit_message_text("📥 **جاري جلب وتحميل الفيديو من المصدر...**", chat_id, msg.message_id, parse_mode="Markdown")
         except Exception:
             pass
 
-        # 1️⃣ المحاولة الأولى عبر yt-dlp بنظام العميل الذكي ios / android
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info)
-                video_title = info.get("title", "مقطع فيديو")
-                download_success = True
-        except Exception as e:
-            err_msg = str(e)
-            print(f"yt-dlp primary attempt failed: {err_msg}")
+        # 1️⃣ المحاولة الأولى: yt-dlp مع عدة تنويعات لعملاء التشغيل
+        for clients in client_configs:
+            ydl_opts = {
+                'outtmpl': file_template,
+                'quiet': True,
+                'no_warnings': True,
+                'socket_timeout': 25,
+                'max_filesize': MAX_FILE_SIZE_BYTES,
+                'nocheckcertificate': True,
+                'geo_bypass': True,
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': clients
+                    }
+                }
+            }
 
-            # 2️⃣ المحاولة الثانية عبر محرك Piped المحدث مع تجاوز SSL
+            if cookie_file:
+                ydl_opts['cookiefile'] = cookie_file
+
+            if is_audio:
+                ydl_opts['format'] = 'bestaudio/best'
+            else:
+                ydl_opts['format'] = 'best[filesize<48M]/best[height<=720]/best[height<=480]/best'
+
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
+                    video_title = info.get("title", "مقطع فيديو")
+                    download_success = True
+                    break
+            except Exception as e:
+                print(f"yt-dlp with clients {clients} failed: {e}")
+                continue
+
+        # 2️⃣ المحاولة الثانية: Piped مع Session موحد وبدون SSL check
+        if not download_success:
             try:
                 filename, video_title = download_via_piped(url, is_audio=is_audio)
                 download_success = True
             except Exception as piped_err:
                 print(f"Piped attempt failed: {piped_err}")
                 
-                # 3️⃣ المحاولة الثالثة عبر محرك Invidious الاحتياطي
+                # 3️⃣ المحاولة الثالثة: Invidious
                 try:
                     filename, video_title = download_via_invidious(url, is_audio=is_audio)
                     download_success = True
                 except Exception as inv_err:
                     print(f"Invidious attempt failed: {inv_err}")
                     
-                    # 4️⃣ المحاولة الرابعة عبر محرك Cobalt
+                    # 4️⃣ المحاولة الرابعة: Cobalt
                     try:
                         filename, video_title = download_via_cobalt(url, is_audio=is_audio)
                         download_success = True
@@ -492,6 +508,7 @@ def handle_callback(call):
                             bot.edit_message_text("❌ تعذر تحميل هذا المقطع حالياً، يرجى تجربة فيديو آخر.", chat_id, msg.message_id)
                         return
 
+        # رفع الملف إلى التليجرام
         if download_success and filename and os.path.exists(filename):
             try:
                 file_size = os.path.getsize(filename)
@@ -522,6 +539,4 @@ def handle_callback(call):
                 except Exception:
                     with open(filename, 'rb') as f:
                         if is_audio:
-                            bot.send_audio(chat_id, f, caption=f"🎬 تم التحميل بنجاح!\n📌 العنوان: {video_title[:60]}\n🤖 بواسطة: @{bot.get_me().username}")
-                        else:
-                            bot.send_video(chat_id, f, caption=f"🎬 تم التحميل بنجاح!\n📌 العنوان: {video_title[:60]}\n🤖 بواسطة: 
+                            bot.send_aud
