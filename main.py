@@ -101,6 +101,7 @@ def handle_callback(call):
             'outtmpl': file_template,
             'quiet': True,
             'no_warnings': True,
+            'max_filesize': 50 * 1024 * 1024,  # تحديد حد أقصى للحجم 50 ميغابايت
             'extractor_args': {
                 'youtube': {
                     'player_client': ['android', 'ios', 'mweb']
@@ -111,13 +112,21 @@ def handle_callback(call):
         if is_audio:
             ydl_opts['format'] = 'bestaudio/best'
         else:
-            # طلب فيديو متكامل محتوياً على الصوت مباشرة
-            ydl_opts['format'] = 'best[ext=mp4]/best'
+            # محاولة جلب أفضل صيغة حجمها أقل من 50MB أولاً
+            ydl_opts['format'] = 'best[filesize<50M]/best[height<=720]/best'
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
+
+            # فحص حجم الملف قبل محاولة إرساله للتليجرام
+            if os.path.exists(filename):
+                file_size = os.path.getsize(filename)
+                if file_size > 50 * 1024 * 1024:
+                    bot.edit_message_text("⚠️ الفيديو المطلوب حجمه أكبر من 50 ميغابايت!\nقوانين تليجرام تمنع البوتات من إرسال ملفات تتجاوز هذا الحجم.", chat_id, msg.message_id)
+                    os.remove(filename)
+                    return
 
             with open(filename, 'rb') as f:
                 if is_audio:
@@ -130,6 +139,8 @@ def handle_callback(call):
             if os.path.exists(filename):
                 os.remove(filename)
 
+        except yt_dlp.utils.FileTooBig:
+            bot.edit_message_text("⚠️ الفيديو المطلوب حجمه أكبر من 50 ميغابايت!\nقوانين تليجرام تمنع البوتات من إرسال ملفات يتجاوز حجمها 50MB.", chat_id, msg.message_id)
         except Exception as e:
             bot.edit_message_text(f"❌ حدث خطأ أثناء التحميل: {str(e)[:100]}", chat_id, msg.message_id)
 
