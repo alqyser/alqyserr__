@@ -10,7 +10,7 @@ import yt_dlp
 # تعطيل تحذيرات SSL كلياً للمحركات البديلة
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# رفع مهلة الاتصال والرفع لتليجرام لمنع أخطاء الشبكة
+# رفع مهلة الاتصال والرفع لتليجرام
 telebot.apihelper.CONNECT_TIMEOUT = 30
 telebot.apihelper.READ_TIMEOUT = 300
 
@@ -19,9 +19,6 @@ CHANNEL_1 = os.getenv("CHANNEL_1")
 CHANNEL_2 = os.getenv("CHANNEL_2")
 ADMIN_ID_ENV = os.getenv("ADMIN_ID")
 YT_COOKIES_ENV = os.getenv("YT_COOKIES")
-
-if not BOT_TOKEN:
-    print("❌ ERROR: BOT_TOKEN is missing in Railway Variables!")
 
 try:
     ADMIN_ID = int(ADMIN_ID_ENV) if ADMIN_ID_ENV else None
@@ -91,7 +88,7 @@ def is_subscribed(user_id):
             return False
     return True
 
-# ==================== أزرار التحكم والواجهات ====================
+# ==================== لوحات الأزرار ====================
 
 def start_keyboard():
     markup = InlineKeyboardMarkup()
@@ -139,7 +136,7 @@ def get_session():
     })
     return session
 
-# ==================== محركات التحميل الفرعية ====================
+# ==================== محركات جلب المحتوى ====================
 
 def download_via_piped(url, is_audio=False):
     video_id = None
@@ -309,8 +306,6 @@ def download_via_cobalt(url, is_audio=False):
     else:
         raise Exception(data.get("text", "Cobalt Error"))
 
-# ==================== المنسق الرئيسي للتحميل ====================
-
 def download_media(url, is_audio, user_id):
     cookie_file = get_cookie_file()
     file_template = f"download_{user_id}_{int(time.time())}.%(ext)s"
@@ -371,7 +366,7 @@ def download_media(url, is_audio, user_id):
 
     raise Exception("All download engines failed.")
 
-# ==================== معالجة رسائل التليجرام ====================
+# ==================== معالجة الأوامر والرسائل ====================
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -548,4 +543,6 @@ def handle_callback(call):
             except ApiTelegramException as e:
                 bot.edit_message_text(f"❌ خطأ تليجرام: {e.description}", chat_id, msg.message_id)
             except requests.exceptions.ReadTimeout:
-              
+                bot.edit_message_text("⏱️ استغرق إرسال الفيديو لشبكة تليجرام وقتاً أطول من المتوقع، يرجى إرسال الرابط مجدداً.", chat_id, msg.message_id)
+            except Exception as e:
+        
