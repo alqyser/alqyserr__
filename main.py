@@ -85,7 +85,7 @@ def start_keyboard():
     markup = InlineKeyboardMarkup()
     markup.add(
         InlineKeyboardButton("💡 طريقة الاستخدام", callback_data="help_usage"),
-        InlineKeyboardButton("👨‍💻 المطور", callback_data="help_dev")
+        InlineKeyboardButton("👨‍💻 المطور", url="https://t.me/alqyser0")
     )
     return markup
 
@@ -318,7 +318,7 @@ def handle_callback(call):
     if call.data == "help_dev":
         bot.answer_callback_query(
             call.id,
-            "👨‍💻 مطوّر البوت وقناته الأساسية متاحة في أزرار الاشتراك.",
+            "👨‍💻 مطوّر البوت: @alqyser0",
             show_alert=True
         )
         return
@@ -441,4 +441,4 @@ def handle_callback(call):
                         pass
 
 bot.infinity_polling(timeout=30, long_polling_timeout=15, skip_pending=True)
-                     
+                            
