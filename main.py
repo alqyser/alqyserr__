@@ -276,4 +276,3 @@ def handle_callback(call):
                         pass
 
 bot.infinity_polling(skip_pending=True)
-    
