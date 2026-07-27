@@ -20,6 +20,9 @@ CHANNEL_2 = os.getenv("CHANNEL_2")
 ADMIN_ID_ENV = os.getenv("ADMIN_ID")
 YT_COOKIES_ENV = os.getenv("YT_COOKIES")
 
+if not BOT_TOKEN:
+    print("❌ ERROR: BOT_TOKEN is missing in Railway Variables!")
+
 try:
     ADMIN_ID = int(ADMIN_ID_ENV) if ADMIN_ID_ENV else None
 except ValueError:
@@ -37,7 +40,6 @@ MAX_FILE_SIZE_BYTES = 48 * 1024 * 1024  # 48MB
 # ==================== دوال المساعدة وتنظيف النصوص ====================
 
 def clean_markdown(text):
-    """تنظيف النصوص من رموز الماركداون لتفادي خطأ Parse Entities"""
     if not text:
         return ""
     for char in ['_', '*', '`', '[', ']', '(', ')']:
@@ -45,7 +47,6 @@ def clean_markdown(text):
     return text.strip()
 
 def save_user(user_id):
-    """حفظ أيدي المستخدم للإحصائيات"""
     try:
         if not os.path.exists("users.txt"):
             with open("users.txt", "w") as f:
@@ -62,7 +63,6 @@ def save_user(user_id):
         print(f"Error saving user: {e}")
 
 def get_users_count():
-    """حساب عدد المستخدمين الكلي"""
     if not os.path.exists("users.txt"):
         return 0
     try:
@@ -321,7 +321,6 @@ def download_media(url, is_audio, user_id):
         ['mweb', 'ios']
     ]
 
-    # 1. المحاولة بواسطة yt-dlp
     for clients in client_configs:
         ydl_opts = {
             'outtmpl': file_template,
@@ -355,7 +354,6 @@ def download_media(url, is_audio, user_id):
             print(f"yt-dlp with clients {clients} failed: {e}")
             continue
 
-    # 2. المحركات الاحتياطية المتسلسلة
     try:
         return download_via_piped(url, is_audio)
     except Exception as e:
@@ -548,4 +546,6 @@ def handle_callback(call):
                     pass
 
             except ApiTelegramException as e:
-                bot.edit_message_t
+                bot.edit_message_text(f"❌ خطأ تليجرام: {e.description}", chat_id, msg.message_id)
+            except requests.exceptions.ReadTimeout:
+              
