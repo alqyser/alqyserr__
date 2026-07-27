@@ -433,7 +433,6 @@ def handle_callback(call):
         cookie_file = get_cookie_file()
         file_template = f"download_{user_id}_{int(time.time())}.%(ext)s"
 
-        # إعدادات متطورة ومزدوجة لـ yt-dlp تمنع حظر الداتا سنتر كلياً
         client_configs = [
             ['android_creator', 'ios'],
             ['tv_embedded', 'android_vr'],
@@ -481,7 +480,7 @@ def handle_callback(call):
                 print(f"yt-dlp with clients {clients} failed: {e}")
                 continue
 
-        # 2️⃣ المحاولة الثانية: Piped مع Session موحد وبدون SSL check
+        # 2️⃣ المحاولة الثانية: Piped
         if not download_success:
             try:
                 filename, video_title = download_via_piped(url, is_audio=is_audio)
@@ -530,13 +529,17 @@ def handle_callback(call):
                     f"🤖 **بواسطة:** @{bot_username}"
                 )
 
+                sent = False
                 try:
                     with open(filename, 'rb') as f:
                         if is_audio:
                             bot.send_audio(chat_id, f, caption=caption_text, parse_mode="Markdown", timeout=300)
                         else:
                             bot.send_video(chat_id, f, caption=caption_text, parse_mode="Markdown", timeout=300)
-                except Exception:
+                    sent = True
+                except Exception as send_err:
+                    print(f"First send failed: {send_err}")
+
+                if not sent:
                     with open(filename, 'rb') as f:
-                        if is_audio:
-                            bot.send_aud
+                
