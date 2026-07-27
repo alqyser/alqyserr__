@@ -25,9 +25,7 @@ user_last_request = {}
 banned_users = set()
 
 COOLDOWN_TIME = 10 
-MAX_FILE_SIZE_BYTES = 48 * 1024 * 1024  # 48MB حد الأمان لتجنب تجاوز 50MB
-
-# ==================== دوال الحماية والتحقق ====================
+MAX_FILE_SIZE_BYTES = 48 * 1024 * 1024
 
 def is_user_banned(user_id):
     return user_id in banned_users
@@ -66,9 +64,11 @@ def download_keyboard():
     )
     return markup
 
-def prepare_cookies_file():
-    """حفظ ملف الكوكيز إن وجد في متغيرات البيئة"""
-    if YT_COOKIES_ENV:
+def get_cookie_file():
+    """التحقق من وجود ملف الكوكيز في المشروع أو متغيرات البيئة"""
+    if os.path.exists("cookies.txt"):
+        return "cookies.txt"
+    elif YT_COOKIES_ENV:
         try:
             with open("cookies.txt", "w", encoding="utf-8") as f:
                 f.write(YT_COOKIES_ENV)
@@ -78,7 +78,7 @@ def prepare_cookies_file():
     return None
 
 def download_via_cobalt(url, is_audio=False):
-    """المحرك الذهبي البديل المخصص لتجاوز حظر يوتيوب بالسيرفرات"""
+    """المحرك البديل لليوتيوب"""
     api_url = "https://api.cobalt.tools/"
     headers = {
         "Accept": "application/json",
@@ -203,10 +203,9 @@ def handle_callback(call):
         filename = None
         download_success = False
 
-        # تجهيز الكوكيز إن وجدت
-        cookie_file = prepare_cookies_file()
-
+        cookie_file = get_cookie_file()
         file_template = f"download_{user_id}_{int(time.time())}.%(ext)s"
+
         ydl_opts = {
             'outtmpl': file_template,
             'quiet': True,
@@ -221,7 +220,8 @@ def handle_callback(call):
             }
         }
 
-        if cookie_file and os.path.exists(cookie_file):
+        # استخدام الكوكيز إن وجد لتفادي الحظر تماماً
+        if cookie_file:
             ydl_opts['cookiefile'] = cookie_file
 
         if is_audio:
@@ -239,19 +239,15 @@ def handle_callback(call):
             err_msg = str(e)
             print(f"yt-dlp failed: {err_msg}")
             
-            # إذا فشلت yt-dlp بسبب حظر يوتيوب بالسيرفر، ننتقل فوراً وبشكل آلي للمحرك الذهبي
-            if "youtube" in url.lower() or "youtu.be" in url.lower() or "Sign in" in err_msg:
-                try:
-                    filename = download_via_cobalt(url, is_audio=is_audio)
-                    download_success = True
-                except Exception as cobalt_err:
-                    if "FileTooBig" in str(cobalt_err):
-                        bot.edit_message_text("⚠️ الفيديو أضخم من 48MB ولا يمكن إرساله عبر التليجرام.", chat_id, msg.message_id)
-                    else:
-                        bot.edit_message_text("❌ تعذر تحميل فيديو يوتيوب، يرجى تجربة رابط فيديو آخر.", chat_id, msg.message_id)
-                    return
-            else:
-                bot.edit_message_text(f"❌ حدث خطأ أثناء التحميل: {err_msg[:100]}", chat_id, msg.message_id)
+            # المحاولة الثانية عبر المحرك البديل
+            try:
+                filename = download_via_cobalt(url, is_audio=is_audio)
+                download_success = True
+            except Exception as cobalt_err:
+                if "FileTooBig" in str(cobalt_err):
+                    bot.edit_message_text("⚠️ الفيديو أضخم من 48MB ولا يمكن إرساله عبر التليجرام.", chat_id, msg.message_id)
+                else:
+                    bot.edit_message_text("❌ تعذر تحميل فيديو يوتيوب، يرجى تجربة فيديو آخر.", chat_id, msg.message_id)
                 return
 
         if download_success and filename and os.path.exists(filename):
@@ -280,4 +276,4 @@ def handle_callback(call):
                         pass
 
 bot.infinity_polling(skip_pending=True)
-        
+    
