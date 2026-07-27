@@ -30,6 +30,16 @@ banned_users = set()
 COOLDOWN_TIME = 5 
 MAX_FILE_SIZE_BYTES = 48 * 1024 * 1024  # 48MB
 
+# ==================== تنظيف النصوص لتفادي خطأ ماركداون ====================
+
+def clean_markdown(text):
+    """تنظيف النصوص من الرموز الخاصة التي تسبب خطأ Parse Entities في تليجرام"""
+    if not text:
+        return ""
+    for char in ['_', '*', '`', '[']:
+        text = str(text).replace(char, ' ')
+    return text.strip()
+
 # ==================== دوال حفظ وتتبع المستخدمين ====================
 
 def save_user(user_id):
@@ -157,7 +167,7 @@ def download_via_cobalt(url, is_audio=False):
                                 os.remove(filename)
                             raise Exception("FileTooBig")
                         f.write(chunk)
-        return filename, "مقطع مجهول"
+        return filename, "مقطع فيديو"
     else:
         raise Exception(data.get("text", "Cobalt Error"))
 
@@ -226,7 +236,7 @@ def download_via_piped(url, is_audio=False):
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
-    first_name = message.from_user.first_name or "المستخدم"
+    first_name = clean_markdown(message.from_user.first_name or "المستخدم")
     save_user(user_id)
 
     if is_user_banned(user_id):
@@ -335,7 +345,7 @@ def handle_callback(call):
         msg = bot.send_message(chat_id, "🔍 **جاري فحص وتجهيز الرابط...**", parse_mode="Markdown")
 
         filename = None
-        video_title = "مقطع بدون عنوان"
+        video_title = "مقطع فيديو"
         download_success = False
 
         cookie_file = get_cookie_file()
@@ -413,18 +423,29 @@ def handle_callback(call):
                 except Exception:
                     pass
 
-                # الكابشن التجميلي
+                # تنظيف النصوص لمنع أخطاء تليجرام
+                safe_title = clean_markdown(video_title[:60])
+                bot_username = clean_markdown(bot.get_me().username)
+
                 caption_text = (
                     f"🎬 **تم التحميل بنجاح!**\n\n"
-                    f"📌 **العنوان:** {video_title[:60]}\n\n"
-                    f"🤖 **بواسطة:** @{bot.get_me().username}"
+                    f"📌 **العنوان:** {safe_title}\n\n"
+                    f"🤖 **بواسطة:** @{bot_username}"
                 )
 
-                with open(filename, 'rb') as f:
-                    if is_audio:
-                        bot.send_audio(chat_id, f, caption=caption_text, parse_mode="Markdown", timeout=300)
-                    else:
-                        bot.send_video(chat_id, f, caption=caption_text, parse_mode="Markdown", timeout=300)
+                try:
+                    with open(filename, 'rb') as f:
+                        if is_audio:
+                            bot.send_audio(chat_id, f, caption=caption_text, parse_mode="Markdown", timeout=300)
+                        else:
+                            bot.send_video(chat_id, f, caption=caption_text, parse_mode="Markdown", timeout=300)
+                except Exception:
+                    # خط الحماية الأخير: الإرسال بنص عادي بدون ماركداون إذا فشل التنسيق
+                    with open(filename, 'rb') as f:
+                        if is_audio:
+                            bot.send_audio(chat_id, f, caption=f"🎬 تم التحميل بنجاح!\n📌 العنوان: {video_title[:60]}\n🤖 بواسطة: @{bot.get_me().username}")
+                        else:
+                            bot.send_video(chat_id, f, caption=f"🎬 تم التحميل بنجاح!\n📌 العنوان: {video_title[:60]}\n🤖 بواسطة: @{bot.get_me().username}")
 
                 bot.delete_message(chat_id, msg.message_id)
             except ApiTelegramException as e:
@@ -441,4 +462,4 @@ def handle_callback(call):
                         pass
 
 bot.infinity_polling(timeout=30, long_polling_timeout=15, skip_pending=True)
-                            
+                                  
