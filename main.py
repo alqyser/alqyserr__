@@ -2,6 +2,7 @@ import os
 import time
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.apihelper import ApiTelegramException
 import yt_dlp
 
 # جلب بيانات البيئة من Railway
@@ -10,7 +11,6 @@ CHANNEL_1 = os.getenv("CHANNEL_1")
 CHANNEL_2 = os.getenv("CHANNEL_2")
 ADMIN_ID_ENV = os.getenv("ADMIN_ID")
 
-# تحويل آيدي الأدمن إلى رقم إن وجد
 try:
     ADMIN_ID = int(ADMIN_ID_ENV) if ADMIN_ID_ENV else None
 except ValueError:
@@ -18,21 +18,17 @@ except ValueError:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# خزن مؤقت في الذاكرة
 user_urls = {}
 user_last_request = {}
 banned_users = set()
 
-# وقت الانتظار لمنع الإغراق (10 ثوانٍ بين كل طلب)
 COOLDOWN_TIME = 10 
-
-# ==================== دوال الحماية والتحقق ====================
+MAX_FILE_SIZE_BYTES = 48 * 1024 * 1024
 
 def is_user_banned(user_id):
     return user_id in banned_users
 
 def is_subscribed(user_id):
-    # الأدمن مستثنى من الاشتراك الإجباري
     if ADMIN_ID and user_id == ADMIN_ID:
         return True
     
@@ -47,8 +43,6 @@ def is_subscribed(user_id):
             print(f"Error checking sub for {ch}: {e}")
             return False
     return True
-
-# ==================== لوحات الأزرار ====================
 
 def sub_keyboard():
     markup = InlineKeyboardMarkup()
@@ -67,8 +61,6 @@ def download_keyboard():
         InlineKeyboardButton("🎵 صوت", callback_data="dl_audio")
     )
     return markup
-
-# ==================== معالجات الأوامر ====================
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -92,48 +84,13 @@ def start(message):
     )
     bot.send_message(message.chat.id, welcome_msg)
 
-# ==================== أوامر الإدارة للأدمن ====================
-
-@bot.message_handler(commands=['ban'])
-def ban_user_command(message):
-    user_id = message.from_user.id
-    if not ADMIN_ID or user_id != ADMIN_ID:
-        return
-
-    try:
-        target_id = int(message.text.split()[1])
-        banned_users.add(target_id)
-        bot.reply_to(message, f"✅ تم حظر المستخدم `{target_id}` بنجاح.", parse_mode="Markdown")
-    except (IndexError, ValueError):
-        bot.reply_to(message, "⚠️ الاستخدام الصحيح: `/ban USER_ID`", parse_mode="Markdown")
-
-@bot.message_handler(commands=['unban'])
-def unban_user_command(message):
-    user_id = message.from_user.id
-    if not ADMIN_ID or user_id != ADMIN_ID:
-        return
-
-    try:
-        target_id = int(message.text.split()[1])
-        if target_id in banned_users:
-            banned_users.remove(target_id)
-            bot.reply_to(message, f"✅ تم إلغاء حظر المستخدم `{target_id}`.", parse_mode="Markdown")
-        else:
-            bot.reply_to(message, "⚠️ هذا المستخدم غير محظور بالأساس.")
-    except (IndexError, ValueError):
-        bot.reply_to(message, "⚠️ الاستخدام الصحيح: `/unban USER_ID`", parse_mode="Markdown")
-
-# ==================== معالجة الرسائل والروابط ====================
-
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     user_id = message.from_user.id
 
-    # 1. فحص الحظر
     if is_user_banned(user_id):
         return
 
-    # 2. فحص الاشتراك الإجباري
     if not is_subscribed(user_id):
         bot.send_message(
             message.chat.id,
@@ -142,18 +99,16 @@ def handle_message(message):
         )
         return
 
-    # 3. حماية Anti-Spam (فحص المهل الزمنية)
     current_time = time.time()
     if user_id in user_last_request:
         elapsed = current_time - user_last_request[user_id]
         if elapsed < COOLDOWN_TIME:
             wait_time = int(COOLDOWN_TIME - elapsed)
-            bot.reply_to(message, f"⏱️ يرجى الانتظار {wait_time} ثوانٍ قبل إرسال رابط آخر لتجنب الضغط على السيرفر.")
+            bot.reply_to(message, f"⏱️ يرجى الانتظار {wait_time} ثوانٍ قبل إرسال رابط آخر.")
             return
 
     url = message.text.strip()
 
-    # 4. فحص صحة المدخلات
     if url.startswith("http://") or url.startswith("https://"):
         user_urls[user_id] = url
         user_last_request[user_id] = current_time
@@ -161,20 +116,18 @@ def handle_message(message):
     else:
         bot.send_message(message.chat.id, "❌ يرجى إرسال رابط صحيح يبدأ بـ http:// أو https://")
 
-# ==================== معالجة أزرار التحميل ====================
-
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
     user_id = call.from_user.id
     chat_id = call.message.chat.id
 
     if is_user_banned(user_id):
-        bot.answer_callback_query(call.id, "🚫 أنت محظور من استخدام البوت.", show_alert=True)
+        bot.answer_callback_query(call.id, "🚫 أنت محظور.", show_alert=True)
         return
 
     if call.data == "check_sub":
         if is_subscribed(user_id):
-            bot.answer_callback_query(call.id, "✅ شكراً لاشتراكك! يمكنك الآن استخدام البوت.")
+            bot.answer_callback_query(call.id, "✅ شكراً لاشتراكك!")
             bot.send_message(chat_id, "أرسل لي الرابط الآن وسأقوم بتحميله لك.")
         else:
             bot.answer_callback_query(call.id, "❌ لم تشترك في جميع القنوات بعد!", show_alert=True)
@@ -192,16 +145,17 @@ def handle_callback(call):
         file_template = f"download_{user_id}_{int(time.time())}.%(ext)s"
         filename = None
 
-        # إعدادات الحماية والتخفي لـ yt-dlp
+        # إعدادات التخفي البديلة لتجاوز حظر يوتيوب بالسيرفرات
         ydl_opts = {
             'outtmpl': file_template,
             'quiet': True,
             'no_warnings': True,
-            'socket_timeout': 30,  # إغلاق الاتصال إذا لم يستجب السيرفر خلال 30 ثانية
-            'max_filesize': 50 * 1024 * 1024,  # حد أقصى 50MB
+            'socket_timeout': 30,
+            'max_filesize': MAX_FILE_SIZE_BYTES,
+            'nocheckcertificate': True,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'ios', 'mweb']
+                    'player_client': ['ios', 'mweb', 'android_creator', 'tv']
                 }
             }
         }
@@ -209,20 +163,18 @@ def handle_callback(call):
         if is_audio:
             ydl_opts['format'] = 'bestaudio/best'
         else:
-            ydl_opts['format'] = 'best[filesize<50M]/best[height<=720]/best'
+            ydl_opts['format'] = 'best[filesize<48M]/best[height<=720]/best[height<=480]/best'
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
 
-            # فحص حجم الملف الفعلي على القرص
             if filename and os.path.exists(filename):
                 file_size = os.path.getsize(filename)
-                if file_size > 50 * 1024 * 1024:
+                if file_size > MAX_FILE_SIZE_BYTES:
                     bot.edit_message_text(
-                        "⚠️ الفيديو المطلوب حجمه أكبر من 50 ميغابايت!\n"
-                        "قوانين شركة تليجرام تمنع البوتات من إرسال ملفات تتجاوز هذا الحجم.",
+                        "⚠️ الفيديو أضخم من 48MB ولا يمكن إرساله عبر التليجرام.",
                         chat_id,
                         msg.message_id
                     )
@@ -237,24 +189,17 @@ def handle_callback(call):
                 bot.delete_message(chat_id, msg.message_id)
 
         except yt_dlp.utils.FileTooBig:
-            bot.edit_message_text(
-                "⚠️ الفيديو المطلوب حجمه أكبر من 50 ميغابايت!\n"
-                "قوانين تليجرام تمنع البوتات من إرسال ملفات تتجاوز هذا الحجم.",
-                chat_id,
-                msg.message_id
-            )
+            bot.edit_message_text("⚠️ الفيديو أضخم من 48MB ولا يمكن إرساله.", chat_id, msg.message_id)
+        except ApiTelegramException as e:
+            bot.edit_message_text(f"❌ خطأ تليجرام: {e.description}", chat_id, msg.message_id)
         except Exception as e:
-            error_msg = str(e)[:100]
-            bot.edit_message_text(f"❌ حدث خطأ أثناء التحميل: {error_msg}", chat_id, msg.message_id)
+            bot.edit_message_text(f"❌ حدث خطأ أثناء التحميل: {str(e)[:100]}", chat_id, msg.message_id)
 
         finally:
-            # تنظيف آمن للحفاظ على المساحة ومنع امتلائها مهما حدث
             if filename and os.path.exists(filename):
                 try:
                     os.remove(filename)
-                except Exception as clean_err:
-                    print(f"Error deleting file {filename}: {clean_err}")
+                except Exception:
+                    pass
 
-# بدء التشغيل مع تجاهل الرسائل المتراكمة القديمة عند الاستئناف
 bot.infinity_polling(skip_pending=True)
-        
