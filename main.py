@@ -1,10 +1,14 @@
 import os
 import time
 import requests
+import urllib3
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from telebot.apihelper import ApiTelegramException
 import yt_dlp
+
+# تعطيل تحذيرات SSL غير الموثوقة للمحركات البديلة
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # رفع مهلة الاتصال والرفع لتليجرام لمنع خطأ ReadTimeout أثناء إرسال الفيديوهات
 telebot.apihelper.CONNECT_TIMEOUT = 30
@@ -129,54 +133,17 @@ def get_cookie_file():
             print(f"Error writing cookies: {e}")
     return None
 
-# ==================== المحركات البديلة ====================
-
-def download_via_cobalt(url, is_audio=False):
-    api_url = "https://api.cobalt.tools/"
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
-    payload = {
-        "url": url,
-        "videoQuality": "720"
-    }
-    if is_audio:
-        payload["downloadMode"] = "audio"
-        payload["audioFormat"] = "mp3"
-
-    res = requests.post(api_url, json=payload, headers=headers, timeout=(10, 40))
-    data = res.json()
-    
-    if data.get("status") in ["redirect", "tunnel"]:
-        file_url = data.get("url")
-        ext = "mp3" if is_audio else "mp4"
-        filename = f"download_yt_{int(time.time())}.{ext}"
-        
-        with requests.get(file_url, stream=True, timeout=(15, 180)) as r:
-            r.raise_for_status()
-            downloaded = 0
-            with open(filename, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=16384):
-                    if chunk:
-                        downloaded += len(chunk)
-                        if downloaded > MAX_FILE_SIZE_BYTES:
-                            f.close()
-                            if os.path.exists(filename):
-                                os.remove(filename)
-                            raise Exception("FileTooBig")
-                        f.write(chunk)
-        return filename, "مقطع فيديو"
-    else:
-        raise Exception(data.get("text", "Cobalt Error"))
+# ==================== المحركات البديلة لليوتيوب ====================
 
 def download_via_piped(url, is_audio=False):
+    """محرك Piped المحدث مع تجاوز شهادات SSL المتضاربة"""
     video_id = None
     if "v=" in url:
         video_id = url.split("v=")[1].split("&")[0]
     elif "youtu.be/" in url:
         video_id = url.split("youtu.be/")[1].split("?")[0]
+    elif "shorts/" in url:
+        video_id = url.split("shorts/")[1].split("?")[0]
     
     if not video_id:
         raise Exception("Invalid YouTube ID")
@@ -184,12 +151,14 @@ def download_via_piped(url, is_audio=False):
     piped_instances = [
         "https://pipedapi.kavin.rocks",
         "https://api.piped.private.coffee",
-        "https://pipedapi.tokhmi.xyz"
+        "https://pipedapi.mha.fi",
+        "https://piped-api.garudalinux.org",
+        "https://pipedapi.astro.swag.ph"
     ]
 
     for api in piped_instances:
         try:
-            res = requests.get(f"{api}/streams/{video_id}", timeout=10)
+            res = requests.get(f"{api}/streams/{video_id}", timeout=10, verify=False)
             if res.status_code == 200:
                 data = res.json()
                 file_url = None
@@ -211,7 +180,7 @@ def download_via_piped(url, is_audio=False):
                 if file_url:
                     ext = "mp3" if is_audio else "mp4"
                     filename = f"download_piped_{int(time.time())}.{ext}"
-                    with requests.get(file_url, stream=True, timeout=(15, 180)) as r:
+                    with requests.get(file_url, stream=True, timeout=(15, 180), verify=False) as r:
                         r.raise_for_status()
                         downloaded = 0
                         with open(filename, 'wb') as f:
@@ -230,6 +199,113 @@ def download_via_piped(url, is_audio=False):
             continue
 
     raise Exception("Piped Engine Failed")
+
+def download_via_invidious(url, is_audio=False):
+    """محرك Invidious الاحتياطي المباشر"""
+    video_id = None
+    if "v=" in url:
+        video_id = url.split("v=")[1].split("&")[0]
+    elif "youtu.be/" in url:
+        video_id = url.split("youtu.be/")[1].split("?")[0]
+    elif "shorts/" in url:
+        video_id = url.split("shorts/")[1].split("?")[0]
+
+    if not video_id:
+        raise Exception("Invalid YouTube ID")
+
+    invidious_instances = [
+        "https://yewtu.be",
+        "https://invidious.privacydev.net",
+        "https://invidious.drgns.space",
+        "https://inv.tux.pizza"
+    ]
+
+    for inv in invidious_instances:
+        try:
+            res = requests.get(f"{inv}/api/v1/videos/{video_id}", timeout=10, verify=False)
+            if res.status_code == 200:
+                data = res.json()
+                title = data.get("title", "مقطع يوتيوب")
+                format_streams = data.get("formatStreams", [])
+                file_url = None
+
+                if is_audio:
+                    adaptive = data.get("adaptiveFormats", [])
+                    for a in adaptive:
+                        if "audio" in a.get("type", ""):
+                            file_url = a.get("url")
+                            break
+                else:
+                    for f_stream in format_streams:
+                        if f_stream.get("qualityLabel") in ["720p", "480p", "360p"]:
+                            file_url = f_stream.get("url")
+                            break
+                    if not file_url and format_streams:
+                        file_url = format_streams[0].get("url")
+
+                if file_url:
+                    ext = "mp3" if is_audio else "mp4"
+                    filename = f"download_inv_{int(time.time())}.{ext}"
+                    with requests.get(file_url, stream=True, timeout=(15, 180), verify=False) as r:
+                        r.raise_for_status()
+                        downloaded = 0
+                        with open(filename, 'wb') as f:
+                            for chunk in r.iter_content(chunk_size=16384):
+                                if chunk:
+                                    downloaded += len(chunk)
+                                    if downloaded > MAX_FILE_SIZE_BYTES:
+                                        f.close()
+                                        if os.path.exists(filename):
+                                            os.remove(filename)
+                                        raise Exception("FileTooBig")
+                                    f.write(chunk)
+                    return filename, title
+        except Exception as e:
+            print(f"Invidious instance {inv} failed: {e}")
+            continue
+
+    raise Exception("Invidious Engine Failed")
+
+def download_via_cobalt(url, is_audio=False):
+    """محرك Cobalt"""
+    api_url = "https://api.cobalt.tools/"
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+    payload = {
+        "url": url,
+        "videoQuality": "720"
+    }
+    if is_audio:
+        payload["downloadMode"] = "audio"
+        payload["audioFormat"] = "mp3"
+
+    res = requests.post(api_url, json=payload, headers=headers, timeout=(10, 40), verify=False)
+    data = res.json()
+    
+    if data.get("status") in ["redirect", "tunnel"]:
+        file_url = data.get("url")
+        ext = "mp3" if is_audio else "mp4"
+        filename = f"download_yt_{int(time.time())}.{ext}"
+        
+        with requests.get(file_url, stream=True, timeout=(15, 180), verify=False) as r:
+            r.raise_for_status()
+            downloaded = 0
+            with open(filename, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=16384):
+                    if chunk:
+                        downloaded += len(chunk)
+                        if downloaded > MAX_FILE_SIZE_BYTES:
+                            f.close()
+                            if os.path.exists(filename):
+                                os.remove(filename)
+                            raise Exception("FileTooBig")
+                        f.write(chunk)
+        return filename, "مقطع فيديو"
+    else:
+        raise Exception(data.get("text", "Cobalt Error"))
 
 # ==================== معالجة الأوامر ====================
 
@@ -341,7 +417,6 @@ def handle_callback(call):
 
         is_audio = (call.data == "dl_audio")
         
-        # المؤشر التفاعلي 1
         msg = bot.send_message(chat_id, "🔍 **جاري فحص وتجهيز الرابط...**", parse_mode="Markdown")
 
         filename = None
@@ -351,6 +426,7 @@ def handle_callback(call):
         cookie_file = get_cookie_file()
         file_template = f"download_{user_id}_{int(time.time())}.%(ext)s"
 
+        # إعدادات yt-dlp النظيفة والفعالة لعميل iOS و Android لمنع حظر الداتا سنتر
         ydl_opts = {
             'outtmpl': file_template,
             'quiet': True,
@@ -361,7 +437,7 @@ def handle_callback(call):
             'geo_bypass': True,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['tv_embedded', 'tv', 'mweb', 'android_vr', 'ios']
+                    'player_client': ['ios', 'android']
                 }
             }
         }
@@ -374,13 +450,12 @@ def handle_callback(call):
         else:
             ydl_opts['format'] = 'best[filesize<48M]/best[height<=720]/best[height<=480]/best'
 
-        # المؤشر التفاعلي 2
         try:
             bot.edit_message_text("📥 **جاري جلب وتحميل الفيديو من المصدر...**", chat_id, msg.message_id, parse_mode="Markdown")
         except Exception:
             pass
 
-        # 1️⃣ المحاولة الأولى عبر yt-dlp
+        # 1️⃣ المحاولة الأولى عبر yt-dlp بنظام العميل الذكي ios / android
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -391,26 +466,32 @@ def handle_callback(call):
             err_msg = str(e)
             print(f"yt-dlp primary attempt failed: {err_msg}")
 
-            # 2️⃣ المحاولة الثانية عبر محرك Cobalt
+            # 2️⃣ المحاولة الثانية عبر محرك Piped المحدث مع تجاوز SSL
             try:
-                filename, video_title = download_via_cobalt(url, is_audio=is_audio)
+                filename, video_title = download_via_piped(url, is_audio=is_audio)
                 download_success = True
-            except Exception as cobalt_err:
-                print(f"Cobalt attempt failed: {cobalt_err}")
+            except Exception as piped_err:
+                print(f"Piped attempt failed: {piped_err}")
                 
-                # 3️⃣ المحاولة الثالثة عبر محرك Piped
+                # 3️⃣ المحاولة الثالثة عبر محرك Invidious الاحتياطي
                 try:
-                    filename, video_title = download_via_piped(url, is_audio=is_audio)
+                    filename, video_title = download_via_invidious(url, is_audio=is_audio)
                     download_success = True
-                except Exception as piped_err:
-                    print(f"Piped attempt failed: {piped_err}")
-                    if "FileTooBig" in str(piped_err) or "FileTooBig" in str(cobalt_err):
-                        bot.edit_message_text("⚠️ الفيديو أضخم من 48MB ولا يمكن إرساله عبر التليجرام.", chat_id, msg.message_id)
-                    else:
-                        bot.edit_message_text("❌ تعذر تحميل هذا المقطع حالياً، يرجى تجربة فيديو آخر.", chat_id, msg.message_id)
-                    return
+                except Exception as inv_err:
+                    print(f"Invidious attempt failed: {inv_err}")
+                    
+                    # 4️⃣ المحاولة الرابعة عبر محرك Cobalt
+                    try:
+                        filename, video_title = download_via_cobalt(url, is_audio=is_audio)
+                        download_success = True
+                    except Exception as cobalt_err:
+                        print(f"Cobalt attempt failed: {cobalt_err}")
+                        if "FileTooBig" in str(cobalt_err) or "FileTooBig" in str(piped_err):
+                            bot.edit_message_text("⚠️ الفيديو أضخم من 48MB ولا يمكن إرساله عبر التليجرام.", chat_id, msg.message_id)
+                        else:
+                            bot.edit_message_text("❌ تعذر تحميل هذا المقطع حالياً، يرجى تجربة فيديو آخر.", chat_id, msg.message_id)
+                        return
 
-        # المؤشر التفاعلي 3
         if download_success and filename and os.path.exists(filename):
             try:
                 file_size = os.path.getsize(filename)
@@ -423,7 +504,6 @@ def handle_callback(call):
                 except Exception:
                     pass
 
-                # تنظيف النصوص لمنع أخطاء تليجرام
                 safe_title = clean_markdown(video_title[:60])
                 bot_username = clean_markdown(bot.get_me().username)
 
@@ -440,26 +520,8 @@ def handle_callback(call):
                         else:
                             bot.send_video(chat_id, f, caption=caption_text, parse_mode="Markdown", timeout=300)
                 except Exception:
-                    # خط الحماية الأخير: الإرسال بنص عادي بدون ماركداون إذا فشل التنسيق
                     with open(filename, 'rb') as f:
                         if is_audio:
                             bot.send_audio(chat_id, f, caption=f"🎬 تم التحميل بنجاح!\n📌 العنوان: {video_title[:60]}\n🤖 بواسطة: @{bot.get_me().username}")
                         else:
-                            bot.send_video(chat_id, f, caption=f"🎬 تم التحميل بنجاح!\n📌 العنوان: {video_title[:60]}\n🤖 بواسطة: @{bot.get_me().username}")
-
-                bot.delete_message(chat_id, msg.message_id)
-            except ApiTelegramException as e:
-                bot.edit_message_text(f"❌ خطأ تليجرام: {e.description}", chat_id, msg.message_id)
-            except requests.exceptions.ReadTimeout:
-                bot.edit_message_text("⏱️ استغرق إرسال الفيديو لشبكة تليجرام وقتاً أطول من المتوقع، يرجى إرسال الرابط مجدداً.", chat_id, msg.message_id)
-            except Exception as e:
-                bot.edit_message_text(f"❌ حدث خطأ أثناء الإرسال: {str(e)[:100]}", chat_id, msg.message_id)
-            finally:
-                if filename and os.path.exists(filename):
-                    try:
-                        os.remove(filename)
-                    except Exception:
-                        pass
-
-bot.infinity_polling(timeout=30, long_polling_timeout=15, skip_pending=True)
-                                  
+                            bot.send_video(chat_id, f, caption=f"🎬 تم التحميل بنجاح!\n📌 العنوان: {video_title[:60]}\n🤖 بواسطة: 
