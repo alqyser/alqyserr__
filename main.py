@@ -6,6 +6,10 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from telebot.apihelper import ApiTelegramException
 import yt_dlp
 
+# رفع مهلة الاتصال والرفع لتلفزيون وتليجرام لمنع خطأ ReadTimeout نهائياً
+telebot.apihelper.CONNECT_TIMEOUT = 30
+telebot.apihelper.READ_TIMEOUT = 300
+
 # جلب بيانات البيئة من Railway
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_1 = os.getenv("CHANNEL_1")
@@ -24,8 +28,10 @@ user_urls = {}
 user_last_request = {}
 banned_users = set()
 
-COOLDOWN_TIME = 10 
-MAX_FILE_SIZE_BYTES = 48 * 1024 * 1024
+COOLDOWN_TIME = 8 
+MAX_FILE_SIZE_BYTES = 48 * 1024 * 1024  # 48MB أقصى حد أمان للتليجرام
+
+# ==================== دوال الحماية والتحقق ====================
 
 def is_user_banned(user_id):
     return user_id in banned_users
@@ -65,7 +71,7 @@ def download_keyboard():
     return markup
 
 def get_cookie_file():
-    """التحقق من وجود ملف الكوكيز في المشروع أو متغيرات البيئة"""
+    """التحقق من وجود ملف الكوكيز"""
     if os.path.exists("cookies.txt"):
         return "cookies.txt"
     elif YT_COOKIES_ENV:
@@ -78,12 +84,12 @@ def get_cookie_file():
     return None
 
 def download_via_cobalt(url, is_audio=False):
-    """المحرك البديل لليوتيوب"""
+    """المحرك الاحتياطي المطور لمعالجة مهلة الاتصال Cobalt API"""
     api_url = "https://api.cobalt.tools/"
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     payload = {
         "url": url,
@@ -93,7 +99,8 @@ def download_via_cobalt(url, is_audio=False):
         payload["downloadMode"] = "audio"
         payload["audioFormat"] = "mp3"
 
-    res = requests.post(api_url, json=payload, headers=headers, timeout=25)
+    # مهلة اتصال مرنة لمنع السقوط
+    res = requests.post(api_url, json=payload, headers=headers, timeout=(10, 45))
     data = res.json()
     
     if data.get("status") in ["redirect", "tunnel"]:
@@ -101,11 +108,11 @@ def download_via_cobalt(url, is_audio=False):
         ext = "mp3" if is_audio else "mp4"
         filename = f"download_yt_{int(time.time())}.{ext}"
         
-        with requests.get(file_url, stream=True, timeout=60) as r:
+        with requests.get(file_url, stream=True, timeout=(15, 180)) as r:
             r.raise_for_status()
             downloaded = 0
             with open(filename, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
+                for chunk in r.iter_content(chunk_size=16384):
                     if chunk:
                         downloaded += len(chunk)
                         if downloaded > MAX_FILE_SIZE_BYTES:
@@ -116,7 +123,8 @@ def download_via_cobalt(url, is_audio=False):
                         f.write(chunk)
         return filename
     else:
-        raise Exception(data.get("text", "Cobalt Error"))
+        err_text = data.get("text", "Cobalt Error")
+        raise Exception(err_text)
 
 # ==================== معالجة الرسائل والأوامر ====================
 
@@ -210,9 +218,10 @@ def handle_callback(call):
             'outtmpl': file_template,
             'quiet': True,
             'no_warnings': True,
-            'socket_timeout': 30,
+            'socket_timeout': 45,
             'max_filesize': MAX_FILE_SIZE_BYTES,
             'nocheckcertificate': True,
+            'geo_bypass': True,
             'extractor_args': {
                 'youtube': {
                     'player_client': ['ios', 'mweb', 'android_creator', 'tv']
@@ -220,7 +229,6 @@ def handle_callback(call):
             }
         }
 
-        # استخدام الكوكيز إن وجد لتفادي الحظر تماماً
         if cookie_file:
             ydl_opts['cookiefile'] = cookie_file
 
@@ -229,7 +237,7 @@ def handle_callback(call):
         else:
             ydl_opts['format'] = 'best[filesize<48M]/best[height<=720]/best[height<=480]/best'
 
-        # المحاولة الأولى عبر yt-dlp
+        # 1. المحاولة الأولى بواسطة yt-dlp
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -239,17 +247,26 @@ def handle_callback(call):
             err_msg = str(e)
             print(f"yt-dlp failed: {err_msg}")
             
-            # المحاولة الثانية عبر المحرك البديل
+            # معالجة مقاطع DRM المحمية
+            if "DRM protected" in err_msg or "protected" in err_msg.lower():
+                bot.edit_message_text("⚠️ هذا الفيديو محمي بموجب حقوق الملكية الرقمية (DRM) ولا يمكن تنزيله برمجياً.", chat_id, msg.message_id)
+                return
+
+            # 2. المحاولة الثانية عبر المحرك البديل
             try:
                 filename = download_via_cobalt(url, is_audio=is_audio)
                 download_success = True
             except Exception as cobalt_err:
-                if "FileTooBig" in str(cobalt_err):
+                cobalt_msg = str(cobalt_err)
+                if "FileTooBig" in cobalt_msg:
                     bot.edit_message_text("⚠️ الفيديو أضخم من 48MB ولا يمكن إرساله عبر التليجرام.", chat_id, msg.message_id)
+                elif "DRM" in cobalt_msg:
+                    bot.edit_message_text("⚠️ هذا الفيديو محمي بحقوق DRM ولا يمكن تحميله.", chat_id, msg.message_id)
                 else:
-                    bot.edit_message_text("❌ تعذر تحميل فيديو يوتيوب، يرجى تجربة فيديو آخر.", chat_id, msg.message_id)
+                    bot.edit_message_text("❌ تعذر تحميل هذا المقطع حالياً، جرب رابط فيديو آخر.", chat_id, msg.message_id)
                 return
 
+        # 3. إرسال الملف مع رفع مهلة الشبكة لمنع ReadTimeout
         if download_success and filename and os.path.exists(filename):
             try:
                 file_size = os.path.getsize(filename)
@@ -259,13 +276,15 @@ def handle_callback(call):
 
                 with open(filename, 'rb') as f:
                     if is_audio:
-                        bot.send_audio(chat_id, f, caption="تم التحميل بنجاح 🎵")
+                        bot.send_audio(chat_id, f, caption="تم التحميل بنجاح 🎵", timeout=300)
                     else:
-                        bot.send_video(chat_id, f, caption="تم التحميل بنجاح 🎬")
+                        bot.send_video(chat_id, f, caption="تم التحميل بنجاح 🎬", timeout=300)
 
                 bot.delete_message(chat_id, msg.message_id)
             except ApiTelegramException as e:
                 bot.edit_message_text(f"❌ خطأ تليجرام: {e.description}", chat_id, msg.message_id)
+            except requests.exceptions.ReadTimeout:
+                bot.edit_message_text("⏱️ استغرق إرسال الفيديو لشبكة تليجرام وقتاً أطول من المتوقع، يرجى إعادة المحاولة.", chat_id, msg.message_id)
             except Exception as e:
                 bot.edit_message_text(f"❌ حدث خطأ أثناء الإرسال: {str(e)[:100]}", chat_id, msg.message_id)
             finally:
@@ -275,4 +294,4 @@ def handle_callback(call):
                     except Exception:
                         pass
 
-bot.infinity_polling(skip_pending=True)
+bot.infinity_polling(timeout=30, long_polling_timeout=15, skip_pending=True)
