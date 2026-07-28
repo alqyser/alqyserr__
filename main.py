@@ -6,7 +6,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from telebot.apihelper import ApiTelegramException
 import yt_dlp
 
-# رفع مهلة الاتصال والرفع لتليجرام لمنع خطأ ReadTimeout أثناء إرسال الفيديوهات
+# رفع مهلة الاتصال والرفع لتليجرام
 telebot.apihelper.CONNECT_TIMEOUT = 30
 telebot.apihelper.READ_TIMEOUT = 300
 
@@ -14,7 +14,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_1 = os.getenv("CHANNEL_1")
 CHANNEL_2 = os.getenv("CHANNEL_2")
 ADMIN_ID_ENV = os.getenv("ADMIN_ID")
-YT_COOKIES_ENV = os.getenv("YT_COOKIES")
 
 try:
     ADMIN_ID = int(ADMIN_ID_ENV) if ADMIN_ID_ENV else None
@@ -30,20 +29,16 @@ banned_users = set()
 COOLDOWN_TIME = 5 
 MAX_FILE_SIZE_BYTES = 48 * 1024 * 1024  # 48MB
 
-# ==================== تنظيف النصوص لتفادي خطأ ماركداون ====================
+# ==================== دوال تنظيف النصوص ====================
 
 def clean_markdown(text):
-    """تنظيف النصوص من الرموز الخاصة التي تسبب خطأ Parse Entities في تليجرام"""
     if not text:
         return ""
     for char in ['_', '*', '`', '[']:
         text = str(text).replace(char, ' ')
     return text.strip()
 
-# ==================== دوال حفظ وتتبع المستخدمين ====================
-
 def save_user(user_id):
-    """حفظ أيدي المستخدم في ملف لحساب الإحصائيات"""
     try:
         if not os.path.exists("users.txt"):
             with open("users.txt", "w") as f:
@@ -60,7 +55,6 @@ def save_user(user_id):
         print(f"Error saving user: {e}")
 
 def get_users_count():
-    """حساب عدد المستخدمين الكلي"""
     if not os.path.exists("users.txt"):
         return 0
     try:
@@ -116,120 +110,6 @@ def download_keyboard():
         InlineKeyboardButton("🎵 صوت", callback_data="dl_audio")
     )
     return markup
-
-def get_cookie_file():
-    if os.path.exists("cookies.txt") and os.path.getsize("cookies.txt") > 20:
-        return "cookies.txt"
-    elif YT_COOKIES_ENV:
-        try:
-            with open("cookies.txt", "w", encoding="utf-8") as f:
-                f.write(YT_COOKIES_ENV)
-            return "cookies.txt"
-        except Exception as e:
-            print(f"Error writing cookies: {e}")
-    return None
-
-# ==================== المحركات البديلة ====================
-
-def download_via_cobalt(url, is_audio=False):
-    api_url = "https://api.cobalt.tools/"
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
-    payload = {
-        "url": url,
-        "videoQuality": "720"
-    }
-    if is_audio:
-        payload["downloadMode"] = "audio"
-        payload["audioFormat"] = "mp3"
-
-    res = requests.post(api_url, json=payload, headers=headers, timeout=(10, 40))
-    data = res.json()
-    
-    if data.get("status") in ["redirect", "tunnel"]:
-        file_url = data.get("url")
-        ext = "mp3" if is_audio else "mp4"
-        filename = f"download_yt_{int(time.time())}.{ext}"
-        
-        with requests.get(file_url, stream=True, timeout=(15, 180)) as r:
-            r.raise_for_status()
-            downloaded = 0
-            with open(filename, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=16384):
-                    if chunk:
-                        downloaded += len(chunk)
-                        if downloaded > MAX_FILE_SIZE_BYTES:
-                            f.close()
-                            if os.path.exists(filename):
-                                os.remove(filename)
-                            raise Exception("FileTooBig")
-                        f.write(chunk)
-        return filename, "مقطع فيديو"
-    else:
-        raise Exception(data.get("text", "Cobalt Error"))
-
-def download_via_piped(url, is_audio=False):
-    video_id = None
-    if "v=" in url:
-        video_id = url.split("v=")[1].split("&")[0]
-    elif "youtu.be/" in url:
-        video_id = url.split("youtu.be/")[1].split("?")[0]
-    
-    if not video_id:
-        raise Exception("Invalid YouTube ID")
-
-    piped_instances = [
-        "https://pipedapi.kavin.rocks",
-        "https://api.piped.private.coffee",
-        "https://pipedapi.tokhmi.xyz"
-    ]
-
-    for api in piped_instances:
-        try:
-            res = requests.get(f"{api}/streams/{video_id}", timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                file_url = None
-                title = data.get("title", "مقطع يوتيوب")
-                
-                if is_audio:
-                    audio_streams = data.get("audioStreams", [])
-                    if audio_streams:
-                        file_url = audio_streams[0].get("url")
-                else:
-                    video_streams = data.get("videoStreams", [])
-                    for v in video_streams:
-                        if v.get("quality") in ["720p", "480p", "360p"] and v.get("videoOnly") is False:
-                            file_url = v.get("url")
-                            break
-                    if not file_url and video_streams:
-                        file_url = video_streams[0].get("url")
-
-                if file_url:
-                    ext = "mp3" if is_audio else "mp4"
-                    filename = f"download_piped_{int(time.time())}.{ext}"
-                    with requests.get(file_url, stream=True, timeout=(15, 180)) as r:
-                        r.raise_for_status()
-                        downloaded = 0
-                        with open(filename, 'wb') as f:
-                            for chunk in r.iter_content(chunk_size=16384):
-                                if chunk:
-                                    downloaded += len(chunk)
-                                    if downloaded > MAX_FILE_SIZE_BYTES:
-                                        f.close()
-                                        if os.path.exists(filename):
-                                            os.remove(filename)
-                                        raise Exception("FileTooBig")
-                                    f.write(chunk)
-                    return filename, title
-        except Exception as e:
-            print(f"Piped instance {api} failed: {e}")
-            continue
-
-    raise Exception("Piped Engine Failed")
 
 # ==================== معالجة الأوامر ====================
 
@@ -341,16 +221,15 @@ def handle_callback(call):
 
         is_audio = (call.data == "dl_audio")
         
-        # المؤشر التفاعلي 1
         msg = bot.send_message(chat_id, "🔍 **جاري فحص وتجهيز الرابط...**", parse_mode="Markdown")
 
         filename = None
         video_title = "مقطع فيديو"
         download_success = False
 
-        cookie_file = get_cookie_file()
         file_template = f"download_{user_id}_{int(time.time())}.%(ext)s"
 
+        # خيارات متقدمة تتجاوز حظر السيرفرات كلياً
         ydl_opts = {
             'outtmpl': file_template,
             'quiet': True,
@@ -361,26 +240,21 @@ def handle_callback(call):
             'geo_bypass': True,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['tv_embedded', 'tv', 'mweb', 'android_vr', 'ios']
+                    'player_client': ['android_vr', 'tv_embedded']
                 }
             }
         }
-
-        if cookie_file:
-            ydl_opts['cookiefile'] = cookie_file
 
         if is_audio:
             ydl_opts['format'] = 'bestaudio/best'
         else:
             ydl_opts['format'] = 'best[filesize<48M]/best[height<=720]/best[height<=480]/best'
 
-        # المؤشر التفاعلي 2
         try:
             bot.edit_message_text("📥 **جاري جلب وتحميل الفيديو من المصدر...**", chat_id, msg.message_id, parse_mode="Markdown")
         except Exception:
             pass
 
-        # 1️⃣ المحاولة الأولى عبر yt-dlp
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -388,29 +262,10 @@ def handle_callback(call):
                 video_title = info.get("title", "مقطع فيديو")
                 download_success = True
         except Exception as e:
-            err_msg = str(e)
-            print(f"yt-dlp primary attempt failed: {err_msg}")
+            print(f"Primary attempt error: {e}")
+            bot.edit_message_text("❌ تعذر تحميل هذا المقطع حالياً، يرجى تجربة فيديو آخر.", chat_id, msg.message_id)
+            return
 
-            # 2️⃣ المحاولة الثانية عبر محرك Cobalt
-            try:
-                filename, video_title = download_via_cobalt(url, is_audio=is_audio)
-                download_success = True
-            except Exception as cobalt_err:
-                print(f"Cobalt attempt failed: {cobalt_err}")
-                
-                # 3️⃣ المحاولة الثالثة عبر محرك Piped
-                try:
-                    filename, video_title = download_via_piped(url, is_audio=is_audio)
-                    download_success = True
-                except Exception as piped_err:
-                    print(f"Piped attempt failed: {piped_err}")
-                    if "FileTooBig" in str(piped_err) or "FileTooBig" in str(cobalt_err):
-                        bot.edit_message_text("⚠️ الفيديو أضخم من 48MB ولا يمكن إرساله عبر التليجرام.", chat_id, msg.message_id)
-                    else:
-                        bot.edit_message_text("❌ تعذر تحميل هذا المقطع حالياً، يرجى تجربة فيديو آخر.", chat_id, msg.message_id)
-                    return
-
-        # المؤشر التفاعلي 3
         if download_success and filename and os.path.exists(filename):
             try:
                 file_size = os.path.getsize(filename)
@@ -423,7 +278,6 @@ def handle_callback(call):
                 except Exception:
                     pass
 
-                # تنظيف النصوص لمنع أخطاء تليجرام
                 safe_title = clean_markdown(video_title[:60])
                 bot_username = clean_markdown(bot.get_me().username)
 
@@ -440,7 +294,6 @@ def handle_callback(call):
                         else:
                             bot.send_video(chat_id, f, caption=caption_text, parse_mode="Markdown", timeout=300)
                 except Exception:
-                    # خط الحماية الأخير: الإرسال بنص عادي بدون ماركداون إذا فشل التنسيق
                     with open(filename, 'rb') as f:
                         if is_audio:
                             bot.send_audio(chat_id, f, caption=f"🎬 تم التحميل بنجاح!\n📌 العنوان: {video_title[:60]}\n🤖 بواسطة: @{bot.get_me().username}")
@@ -462,4 +315,4 @@ def handle_callback(call):
                         pass
 
 bot.infinity_polling(timeout=30, long_polling_timeout=15, skip_pending=True)
-  
+        
